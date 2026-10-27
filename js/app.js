@@ -26,12 +26,15 @@
     cols: 40, square: false, brand: 'MARD', maxColors: 16,
     sampling: 'avg', match: 'lab', dither: 'off', merge: 0,
     blank: true, boundary: false, whiteTh: 240,
-    labelMode: 'code', beadMm: 2.6, autoTrim: true,
+    labelMode: 'code', beadMm: 2.6, autoTrim: true, style: 'original',
   };
   const DEFAULT_DISPLAY = { code: true, grid: true, board: false, coords: true };
 
   const S = {
     img: null, imgFull: null, imgName: '', imgW: 0, imgH: 0,
+    sourceOriginal: null, sourceMode: 'image', whiteBg: false, mode: 'image',
+    text: '', textColor: '#2F2B2F', textOutline: true, templateId: null,
+    projectId: null,
     cols: 40, rows: 40, total: 0, empty: 0,
     grid: [], palette: [], excluded: new Set(),
     selected: 0, tool: 'brush',
@@ -118,6 +121,136 @@
     S.img = c;
   }
 
+  /* 画面风格：原图 / 卡通 / 像素 / 剪影 */
+  function applyStyle(src, style) {
+    if (!src || style === 'original') return src;
+    const w = src.width, h = src.height;
+    const out = document.createElement('canvas');
+    out.width = w; out.height = h;
+    const ctx = out.getContext('2d');
+
+    if (style === 'cartoon') {
+      const scale = Math.min(1, 140 / Math.max(w, h));
+      const small = document.createElement('canvas');
+      small.width = Math.max(1, Math.round(w * scale));
+      small.height = Math.max(1, Math.round(h * scale));
+      const sctx = small.getContext('2d');
+      sctx.imageSmoothingEnabled = true;
+      sctx.imageSmoothingQuality = 'high';
+      sctx.drawImage(src, 0, 0, small.width, small.height);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(small, 0, 0, w, h);
+      const img = ctx.getImageData(0, 0, w, h);
+      const d = img.data;
+      const levels = 6;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i + 3] < 16) continue;
+        for (let k = 0; k < 3; k++) {
+          d[i + k] = Math.round(d[i + k] / 255 * (levels - 1)) / (levels - 1) * 255;
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+      return out;
+    }
+
+    if (style === 'pixel') {
+      const block = Math.max(2, Math.round(Math.max(w, h) / 120));
+      const sw = Math.max(1, Math.round(w / block));
+      const sh = Math.max(1, Math.round(h / block));
+      const small = document.createElement('canvas');
+      small.width = sw; small.height = sh;
+      const sctx = small.getContext('2d');
+      sctx.imageSmoothingEnabled = false;
+      sctx.drawImage(src, 0, 0, sw, sh);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(small, 0, 0, sw, sh, 0, 0, w, h);
+      return out;
+    }
+
+    if (style === 'silhouette') {
+      ctx.drawImage(src, 0, 0);
+      const img = ctx.getImageData(0, 0, w, h);
+      const d = img.data;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i + 3] < 16) { d[i + 3] = 0; continue; }
+        const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+        if (lum > 190) { d[i + 3] = 0; }
+        else {
+          d[i] = 47; d[i + 1] = 43; d[i + 2] = 47; d[i + 3] = 255;
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+      return out;
+    }
+    return src;
+  }
+
+  function flattenColors(canvas, colors) {
+    if (!colors || !colors.length) return canvas;
+    const hexToRgb = hex => ({
+      r: parseInt(hex.slice(1, 3), 16),
+      g: parseInt(hex.slice(3, 5), 16),
+      b: parseInt(hex.slice(5, 7), 16),
+    });
+    // 以「白 → 目标色」的覆盖率判断边缘：覆盖率 >= 50% 取纯色，否则留空
+    const list = colors.map(hex => {
+      const c = hexToRgb(hex);
+      return { r: c.r, g: c.g, b: c.b, vr: c.r - 255, vg: c.g - 255, vb: c.b - 255, len2: (c.r - 255) ** 2 + (c.g - 255) ** 2 + (c.b - 255) ** 2 };
+    });
+    const ctx = canvas.getContext('2d');
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] < 100) { d[i + 3] = 0; continue; }
+      const r = d[i], g = d[i + 1], b = d[i + 2];
+      const wr = r - 255, wg = g - 255, wb = b - 255;
+      let best = null, bestRes = Infinity, bestA = 0;
+      for (const c of list) {
+        if (c.len2 < 1) continue;
+        const a = (wr * c.vr + wg * c.vg + wb * c.vb) / c.len2;
+        if (a <= 0) continue;
+        const er = wr - a * c.vr, eg = wg - a * c.vg, eb = wb - a * c.vb;
+        const res = er * er + eg * eg + eb * eb;
+        if (res < bestRes) { bestRes = res; best = c; bestA = a; }
+      }
+      if (best && bestA >= 0.5) {
+        d[i] = best.r; d[i + 1] = best.g; d[i + 2] = best.b; d[i + 3] = 255;
+      } else {
+        d[i + 3] = 0;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    return canvas;
+  }
+
+  function detectWhiteBg(canvas) {
+    if (!canvas) return false;
+    const w = canvas.width, h = canvas.height;
+    if (!w || !h) return false;
+    const ctx = canvas.getContext('2d');
+    const pts = [
+      [0, 0], [w - 1, 0], [0, h - 1], [w - 1, h - 1],
+      [w >> 1, 0], [0, h >> 1], [w - 1, h >> 1], [w >> 1, h - 1],
+    ];
+    let white = 0;
+    for (const [x, y] of pts) {
+      const d = ctx.getImageData(x, y, 1, 1).data;
+      if (d[3] < 40 || (d[0] >= 238 && d[1] >= 238 && d[2] >= 238)) white++;
+    }
+    return white >= pts.length * 0.75;
+  }
+
+  function refreshSource() {
+    if (!S.sourceOriginal) return;
+    S.imgFull = S.sourceMode === 'image'
+      ? applyStyle(S.sourceOriginal, S.opts.style)
+      : S.sourceOriginal;
+    applyTrim();
+    S.imgW = S.img.width;
+    S.imgH = S.img.height;
+  }
+
   function saveSettings() {
     try {
       localStorage.setItem(LS_KEY, JSON.stringify({
@@ -181,7 +314,10 @@
       if (input.files && input.files[0]) loadFile(input.files[0]).finally(() => { input.value = ''; });
     });
     $('#changeImageBtn').addEventListener('click', e => { e.stopPropagation(); input.click(); });
-    $('#changeBtn').addEventListener('click', () => input.click());
+    $('#changeBtn').addEventListener('click', () => {
+      if (S.sourceMode === 'image' && S.img) input.click();
+      else $('#backBtn').click();
+    });
 
     ['dragenter', 'dragover'].forEach(ev => card.addEventListener(ev, e => {
       e.preventDefault();
@@ -204,7 +340,6 @@
     });
 
     $('#sampleBtn').addEventListener('click', () => loadSample());
-    $('#sampleTop').addEventListener('click', () => loadSample());
   }
 
   function loadSample() {
@@ -237,10 +372,12 @@
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(img, 0, 0, w, h);
 
-        S.imgFull = c;
-        S.imgW = w; S.imgH = h;
-        applyTrim();
-        S.imgW = S.img.width; S.imgH = S.img.height;
+        S.sourceOriginal = c;
+        S.sourceMode = 'image';
+        S.whiteBg = detectWhiteBg(c);
+        S.projectId = null;
+        S.title = '';
+        refreshSource();
         S.imgName = file.name.replace(/\.[^.]+$/, '');
         if (!S.title) S.title = S.imgName;
         $('#titleInput').value = S.title;
@@ -249,8 +386,7 @@
         $('#uploadDim').textContent = `${img.width} × ${img.height} 像素`;
         $('#uploadEmpty').classList.add('hidden');
         $('#uploadPreview').classList.remove('hidden');
-        $('#calibrate').classList.remove('hidden');
-        $('#viewHome').classList.add('has-image');
+        updateCalibrateVisibility();
         updateHomeUI();
 
         if (!$('#viewWorkspace').classList.contains('hidden')) {
@@ -366,7 +502,10 @@
   /* 生成                                                                 */
   /* ------------------------------------------------------------------ */
   function generateAndOpen() {
-    if (!S.img) { toast('请先选择一张图片'); return; }
+    if (!S.img) {
+      toast(S.mode === 'text' ? '请先输入文字' : S.mode === 'template' ? '请先选择一个模板' : '请先选择一张图片');
+      return;
+    }
     if (S.opts.cols !== S.cols) S.opts.cols = S.cols;
     showView('workspace');
     S.fit = true;
@@ -379,7 +518,11 @@
 
   function generatePattern(notify) {
     if (!S.img) return false;
-    const res = E.generate(S.img, { ...S.opts, cols: S.cols });
+    const genOpts = { ...S.opts, cols: S.cols };
+    if (S.sourceMode !== 'image') genOpts.sampling = 'dominant';
+    genOpts.edgeClean = S.whiteBg && S.opts.blank;
+    genOpts.flat = S.sourceMode !== 'image';
+    const res = E.generate(S.img, genOpts);
     if (!res.palette.length || !res.total) {
       toast('这张图没有可拼的内容，换一张试试');
       return false;
@@ -408,6 +551,7 @@
     renderLegendLists();
     syncSettingsUI();
     updateHistoryButtons();
+    scheduleSave();
   }
 
   function updateMeta() {
@@ -417,6 +561,8 @@
     $('#costLine').textContent =
       `约 ${fmtCm(S.cols)} × ${fmtCm(S.rows)} cm · ${fmtTime(S.total)}`;
     $('#exportContents').textContent = '包含：标题 · 坐标 · 色号 · 图例 · 统计';
+    const changeBtn = $('#changeBtn');
+    if (changeBtn) changeBtn.textContent = S.sourceMode === 'image' ? '更换图片' : '更换来源';
   }
 
   /* ------------------------------------------------------------------ */
@@ -744,8 +890,25 @@
     syncSettingsUI();
   }
 
+  function remapBrandCodes(brand) {
+    const data = window.PINDOU_COLORS;
+    const map = {};
+    Object.keys(data).forEach(hex => {
+      const code = data[hex][brand];
+      if (code) map[hex] = code;
+    });
+    S.palette.forEach(p => { if (map[p.hex]) p.code = map[p.hex]; });
+  }
+
   function regenerate() {
     if (!S.grid.length) { updateHomeUI(); saveSettings(); return; }
+    if (!S.img) {
+      remapBrandCodes(S.opts.brand);
+      saveSettings();
+      updateAll();
+      toast(`已切换为 ${S.opts.brand} 色号（无原图，尺寸与颜色数保持）`);
+      return;
+    }
     saveSettings();
     generatePattern(false);
     buildSettingsPanels();
@@ -757,11 +920,7 @@
     S.display = { ...DEFAULT_DISPLAY };
     S.cols = DEFAULTS.cols;
     S.opts.cols = S.cols;
-    if (S.imgFull) {
-      applyTrim();
-      S.imgW = S.img.width;
-      S.imgH = S.img.height;
-    }
+    if (S.sourceOriginal) refreshSource();
     saveSettings();
     syncAdvancedUI();
     syncDisplayUI();
@@ -800,6 +959,16 @@
           <option value="fs">Floyd–Steinberg</option>
         </select>
         <span class="adv-help">照片渐变多时开启，卡通图案建议关闭。</span>
+      </div>
+      <div class="adv-row">
+        <span class="adv-label">画面风格</span>
+        <select class="select" data-adv="style">
+          <option value="original">原图（推荐）</option>
+          <option value="cartoon">卡通（色块更干净）</option>
+          <option value="pixel">像素（复古颗粒）</option>
+          <option value="silhouette">剪影（单色轮廓）</option>
+        </select>
+        <span class="adv-help">仅对「图片」来源生效；文字与模板保持矢量清晰。</span>
       </div>
       <div class="adv-row">
         <span class="adv-label">区域合并（去杂色）</span>
@@ -848,13 +1017,23 @@
     const host = $('#advancedMobile');
     host.addEventListener('change', e => {
       const adv = e.target.dataset.adv;
-      if (adv) { S.opts[adv] = e.target.value; saveSettings(); regenerate(); return; }
+      if (adv) {
+        S.opts[adv] = e.target.value;
+        if (adv === 'style') {
+          refreshSource();
+          updateHomeUI();
+          regenerate();
+        } else {
+          regenerate();
+        }
+        saveSettings();
+        return;
+      }
       const chk = e.target.dataset.advCheck;
       if (chk) {
         S.opts[chk] = e.target.checked;
         if (chk === 'autoTrim') {
-          applyTrim();
-          S.imgW = S.img.width; S.imgH = S.img.height;
+          refreshSource();
           updateHomeUI();
         }
         saveSettings();
@@ -1154,6 +1333,7 @@
       });
       updateMeta();
       renderLegendLists();
+      scheduleSave();
     }
     stroke = null;
   }
@@ -1328,7 +1508,9 @@
       }
       closeAllSheets();
       showView('home');
+      setMode(S.sourceMode || 'image');
       updateHomeUI();
+      refreshRecent();
     });
     $('#exportBtn').addEventListener('click', () => {
       syncExportUI();
@@ -1542,6 +1724,8 @@
       meta: $('#wsMeta').textContent,
       cost: $('#costLine').textContent,
       tool: S.tool,
+      mode: S.mode,
+      sourceMode: S.sourceMode,
       display: { ...S.display },
       sheetOpen: active ? active.id : null,
       sheetRect: active ? {
@@ -1558,6 +1742,10 @@
       toast: $('#toastText').textContent,
       history: S.history.length,
       selected: S.selected,
+      projects: S._projects || null,
+      share: S._share || null,
+      manifest: !!document.querySelector('link[rel="manifest"]'),
+      pwa: { hasSW: 'serviceWorker' in navigator, controlled: !!(navigator.serviceWorker && navigator.serviceWorker.controller), registrations: S._swCount === undefined ? null : S._swCount },
       storage: (() => { try { return JSON.parse(localStorage.getItem(LS_KEY) || 'null'); } catch (e) { return null; } })(),
     };
   }
@@ -1566,7 +1754,18 @@
     const style = document.createElement('style');
     style.textContent = '*,*::before,*::after{transition:none !important;animation:none !important}';
     document.head.appendChild(style);
-    await loadSample();
+    if (cfg.text || cfg.template) {
+      if (cfg.text) {
+        setMode('text');
+        $('#textInput').value = cfg.text;
+        buildTextSource();
+      } else {
+        setMode('template');
+        selectTemplate(cfg.template);
+      }
+    } else {
+      await loadSample();
+    }
     if (cfg.cols) setCols(cfg.cols);
     if (cfg.brand) { S.opts.brand = cfg.brand; updateHomeUI(); }
     if (cfg.colors) S.opts.maxColors = cfg.colors;
@@ -1594,6 +1793,60 @@
       const b = document.querySelector('[data-display="' + cfg.clickDisplay + '"]');
       if (b) b.click();
     }
+    if (cfg.shareTest) {
+      try {
+        const link = await window.PindouShare.buildLink(S);
+        const payload = await window.PindouShare.decodePayload(link.code);
+        const st = window.PindouShare.stateFromPayload(payload);
+        const card = window.PindouShare.renderCard({
+          title: S.title || '拼豆图纸',
+          cols: S.cols, rows: S.rows, grid: S.grid, palette: S.palette,
+          brand: S.opts.brand, total: S.total,
+          colors: S.palette.filter(p => p.count > 0).length,
+          url: link.url,
+        });
+        S._share = {
+          urlLen: link.url.length,
+          decodedTotal: st.total,
+          decodedCols: st.cols,
+          equal: st.total === S.total && st.cols === S.cols,
+          cardW: card.width,
+          cardH: card.height,
+        };
+        if (cfg.shareOpen) {
+          await loadSharedPattern(link.code);
+          S._share.loadedTotal = S.total;
+          S._share.loadedTitle = S.title;
+        }
+      } catch (e) {
+        S._share = { error: String(e) };
+      }
+    }
+    if (cfg.projectTest) {
+      try {
+        await saveProject();
+        const list = await window.PindouProjects.all();
+        S._projects = {
+          count: list.length,
+          firstTotal: list[0] ? list[0].total : null,
+          thumb: !!(list[0] && list[0].thumb),
+          source: !!(list[0] && list[0].source),
+        };
+        if (list[0]) {
+          await loadProject(list[0].id);
+          S._projects.loadedTotal = S.total;
+          S._projects.loadedTitle = S.title;
+        }
+      } catch (e) {
+        S._projects = { error: String(e) };
+      }
+    }
+    if (cfg.pwaTest) {
+      try {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        S._swCount = regs.length;
+      } catch (e) { S._swCount = -1; }
+    }
     if (cfg.sheet) openSheet(cfg.sheet);
     await new Promise(r => setTimeout(r, 80));
     return collectSummary();
@@ -1614,6 +1867,11 @@
 
   function bootHash() {
     const hash = location.hash;
+    const shared = window.PindouShare.readHashPayload();
+    if (shared) {
+      loadSharedPattern(shared);
+      return;
+    }
     if (hash.startsWith('#selftest')) {
       let cfg = {};
       const idx = hash.indexOf('=');
@@ -1631,13 +1889,35 @@
       });
     } else if (hash.startsWith('#demo')) {
       const mode = hash.split('=')[1] || 'workspace';
+      if (mode === 'text') {
+        setMode('text');
+        $('#textInput').value = '生日快乐';
+        buildTextSource();
+        generateAndOpen();
+        document.documentElement.dataset.ready = '1';
+        return;
+      }
+      if (mode === 'template') {
+        setMode('template');
+        selectTemplate('heart');
+        generateAndOpen();
+        document.documentElement.dataset.ready = '1';
+        return;
+      }
+      if (mode === 'home') {
+        document.documentElement.dataset.ready = '1';
+        return;
+      }
       loadSample().then(() => {
-        if (mode === 'home' || mode === 'calibrate') { document.documentElement.dataset.ready = '1'; return; }
+        if (mode === 'calibrate') { document.documentElement.dataset.ready = '1'; return; }
         generateAndOpen();
         if (mode === 'export') { syncExportUI(); openSheet('sheetExport'); }
         if (mode === 'settings') { syncSettingsUI(); openSheet('sheetSettings'); }
         if (mode === 'legend') { renderLegendLists(); openSheet('sheetLegend'); }
         if (mode === 'advanced') { openSheet('sheetAdvanced'); }
+        if (mode === 'share') { openShareSheet(); }
+        if (mode === 'help') { openSheet('sheetHelp'); }
+        if (mode === 'pro') { openSheet('sheetPro'); }
         document.documentElement.dataset.ready = '1';
       });
     } else if (hash === '#printdump') {
@@ -1664,14 +1944,446 @@
     }
   }
 
+
+  /* ------------------------------------------------------------------ */
+  /* 首页：三模式                                                         */
+  /* ------------------------------------------------------------------ */
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function setMode(mode) {
+    S.mode = mode;
+    $$('.mode-tab').forEach(b => {
+      const on = b.dataset.mode === mode;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    $('#modeImage').classList.toggle('hidden', mode !== 'image');
+    $('#modeText').classList.toggle('hidden', mode !== 'text');
+    $('#modeTemplate').classList.toggle('hidden', mode !== 'template');
+    if (mode === 'text') setTimeout(() => { $('#textInput').focus(); }, 60);
+    updateCalibrateVisibility();
+    refreshRecent();
+  }
+
+  function updateCalibrateVisibility() {
+    const has = !!S.img && !!S.sourceOriginal && S.sourceMode === S.mode;
+    $('#calibrate').classList.toggle('hidden', !has);
+    $('#viewHome').classList.toggle('has-image', has);
+    refreshRecent();
+  }
+
+  /* ---------- 文字模式 ---------- */
+  function setupTextMode() {
+    const COLORS = ['#2F2B2F', '#C1444A', '#FFA9AD', '#FFDA45', '#3DAF80', '#3677D2'];
+    const host = $('#textSwatches');
+    host.innerHTML = COLORS.map((hex, i) =>
+      `<button class="swatch-btn ${i === 0 ? 'active' : ''}" style="background:${hex}" data-color="${hex}" aria-label="文字颜色 ${i + 1}" type="button"></button>`
+    ).join('');
+    host.addEventListener('click', e => {
+      const b = e.target.closest('[data-color]');
+      if (!b) return;
+      S.textColor = b.dataset.color;
+      $$('.swatch-btn', host).forEach(x => x.classList.toggle('active', x === b));
+      buildTextSource();
+    });
+    $('#textOutline').addEventListener('change', () => {
+      S.textOutline = $('#textOutline').checked;
+      buildTextSource();
+    });
+    let timer = null;
+    $('#textInput').addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = setTimeout(buildTextSource, 220);
+    });
+    $('#textInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); buildTextSource(); }
+    });
+  }
+
+  function buildTextSource() {
+    const raw = $('#textInput').value.replace(/\s+/g, ' ').trim().slice(0, 12);
+    S.text = raw;
+    const preview = $('#textPreview');
+    const pctx = preview.getContext('2d');
+    pctx.fillStyle = '#FFFFFF';
+    pctx.fillRect(0, 0, preview.width, preview.height);
+
+    if (!raw) {
+      S.img = null;
+      S.sourceOriginal = null;
+      updateCalibrateVisibility();
+      return;
+    }
+
+    const W = 900, H = 360;
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    let size = 210;
+    const fontOf = n => `700 ${n}px "PingFang SC","Noto Sans SC","Hiragino Sans GB","Microsoft YaHei",sans-serif`;
+    ctx.font = fontOf(size);
+    while (size > 56 && ctx.measureText(raw).width > W - 120) {
+      size -= 8;
+      ctx.font = fontOf(size);
+    }
+    if (S.textOutline) {
+      ctx.strokeStyle = '#2F2B2F';
+      ctx.lineWidth = Math.max(6, size * 0.055);
+      ctx.strokeText(raw, W / 2, H / 2);
+    }
+    ctx.fillStyle = S.textColor;
+    ctx.fillText(raw, W / 2, H / 2);
+
+    const flatColors = [S.textColor];
+    if (S.textOutline) flatColors.push('#2F2B2F');
+    flattenColors(c, flatColors);
+
+    const scale = Math.min(preview.width / W, preview.height / H);
+    pctx.drawImage(c, 0, 0, W, H,
+      (preview.width - W * scale) / 2,
+      (preview.height - H * scale) / 2,
+      W * scale, H * scale);
+
+    S.sourceOriginal = c;
+    S.sourceMode = 'text';
+    S.whiteBg = true;
+    S.projectId = null;
+    S.title = raw;
+    S.display.code = false;
+    syncDisplayUI();
+    refreshSource();
+    $('#titleInput').value = S.title;
+    updateCalibrateVisibility();
+    updateHomeUI();
+  }
+
+  /* ---------- 模板模式 ---------- */
+  function setupTemplates() {
+    const host = $('#templateGrid');
+    host.innerHTML = window.PindouTemplates.list.map(t => `
+      <button class="template-card" type="button" data-template="${t.id}">
+        <img class="template-thumb" src="${window.PindouTemplates.renderThumb(t.id, 120)}" alt="${t.name}" loading="lazy">
+        <span class="template-name">${t.name}</span>
+      </button>`).join('');
+    host.addEventListener('click', e => {
+      const b = e.target.closest('[data-template]');
+      if (b) selectTemplate(b.dataset.template);
+    });
+  }
+
+  function selectTemplate(id) {
+    const tpl = window.PindouTemplates.get(id);
+    if (!tpl) return;
+    S.templateId = id;
+    S.sourceOriginal = window.PindouTemplates.renderSource(id, 320);
+    flattenColors(S.sourceOriginal, tpl.colors);
+    S.sourceMode = 'template';
+    S.whiteBg = true;
+    S.projectId = null;
+    S.title = tpl.name;
+    S.display.code = false;
+    syncDisplayUI();
+    refreshSource();
+    $$('#templateGrid .template-card').forEach(x => {
+      x.classList.toggle('active', x.dataset.template === id);
+    });
+    $('#titleInput').value = S.title;
+    updateCalibrateVisibility();
+    updateHomeUI();
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 作品库（IndexedDB）                                                  */
+  /* ------------------------------------------------------------------ */
+  function canvasDataUrl(src, maxDim, quality) {
+    if (!src) return null;
+    const scale = Math.min(1, maxDim / Math.max(src.width, src.height));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(src.width * scale));
+    c.height = Math.max(1, Math.round(src.height * scale));
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, c.width, c.height);
+    ctx.drawImage(src, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', quality || 0.86);
+  }
+
+  function makeThumb() {
+    if (!S.grid.length) return '';
+    const cell = Math.max(1, Math.floor(360 / Math.max(S.cols, S.rows)));
+    const c = document.createElement('canvas');
+    c.width = S.cols * cell;
+    c.height = S.rows * cell;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#F6F4EF';
+    ctx.fillRect(0, 0, c.width, c.height);
+    for (let y = 0; y < S.rows; y++) {
+      for (let x = 0; x < S.cols; x++) {
+        const v = S.grid[y][x];
+        if (v < 0) continue;
+        ctx.fillStyle = S.palette[v].hex;
+        ctx.fillRect(x * cell, y * cell, cell, cell);
+      }
+    }
+    return c.toDataURL('image/png');
+  }
+
+  function scheduleSave() {
+    if (!S.grid.length || !window.PindouProjects) return;
+    clearTimeout(scheduleSave._t);
+    scheduleSave._t = setTimeout(saveProject, 1600);
+  }
+
+  async function saveProject() {
+    if (!S.grid.length || !window.PindouProjects) return;
+    try {
+      if (!S.projectId) {
+        S.projectId = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      }
+      const existing = await window.PindouProjects.get(S.projectId).catch(() => null);
+      const project = {
+        id: S.projectId,
+        title: S.title || '未命名作品',
+        brand: S.opts.brand,
+        cols: S.cols, rows: S.rows,
+        grid: S.grid.map(row => row.slice()),
+        palette: S.palette.map(p => ({ code: p.code, hex: p.hex, count: p.count })),
+        total: S.total,
+        sourceMode: S.sourceMode,
+        whiteBg: !!S.whiteBg,
+        thumb: makeThumb(),
+        source: (existing && existing.source) || canvasDataUrl(S.sourceOriginal, 800, 0.86),
+        createdAt: existing ? existing.createdAt : Date.now(),
+        updatedAt: Date.now(),
+      };
+      await window.PindouProjects.put(project);
+      await window.PindouProjects.trim(24);
+    } catch (e) { /* 存储不可用时静默 */ }
+  }
+
+  async function refreshRecent() {
+    if (!window.PindouProjects) return;
+    let list = [];
+    try { list = await window.PindouProjects.all(); } catch (e) { return; }
+    const sec = $('#recentSection');
+    const wrap = $('#recentGrid');
+    if (!list.length) { sec.classList.add('hidden'); return; }
+    wrap.innerHTML = list.slice(0, 8).map(p => `
+      <div class="recent-card" data-project="${p.id}">
+        <img class="recent-thumb" src="${p.thumb || ''}" alt="">
+        <div class="recent-title">${escapeHtml(p.title || '未命名作品')}</div>
+        <div class="recent-meta">${p.cols} × ${p.rows} · ${p.total.toLocaleString('zh-CN')} 颗</div>
+        <button class="recent-del" type="button" data-delete="${p.id}" aria-label="删除作品">✕</button>
+      </div>`).join('');
+    sec.classList.remove('hidden');
+  }
+
+  function imageFromDataUrl(url) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = url;
+    });
+  }
+
+  async function loadProject(id) {
+    if (!window.PindouProjects) return;
+    const p = await window.PindouProjects.get(id).catch(() => null);
+    if (!p) return;
+    S.projectId = p.id;
+    S.title = p.title || '未命名作品';
+    S.opts.brand = p.brand || 'MARD';
+    S.opts.cols = p.cols;
+    S.cols = p.cols;
+    S.rows = p.rows;
+    S.grid = p.grid.map(row => row.slice());
+    S.palette = p.palette.map(x => ({ ...x }));
+    S.excluded = new Set();
+    S.history = [];
+    S.future = [];
+    S.gridBackup = null;
+    S.selected = 0;
+    updateCounts();
+    S.dirty = false;
+    S.sourceOriginal = null;
+    S.img = null;
+    S.imgFull = null;
+    if (p.source) {
+      try {
+        const img = await imageFromDataUrl(p.source);
+        const c = document.createElement('canvas');
+        c.width = img.width; c.height = img.height;
+        c.getContext('2d').drawImage(img, 0, 0);
+        S.sourceOriginal = c;
+        S.sourceMode = p.sourceMode || 'image';
+        S.whiteBg = p.whiteBg !== undefined ? !!p.whiteBg : detectWhiteBg(c);
+        refreshSource();
+      } catch (e) { /* ignore */ }
+    }
+    $('#titleInput').value = S.title;
+    showView('workspace');
+    buildSettingsPanels();
+    S.fit = true;
+    fitToWindow();
+    updateAll();
+    toast(p.source ? '已打开作品' : '已打开作品（无原图，无法重新生成）');
+  }
+
+  async function deleteProject(id) {
+    if (!window.PindouProjects) return;
+    try { await window.PindouProjects.del(id); } catch (e) { /* ignore */ }
+    if (S.projectId === id) S.projectId = null;
+    refreshRecent();
+    toast('作品已删除');
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 分享                                                                 */
+  /* ------------------------------------------------------------------ */
+  let shareState = null;
+
+  async function openShareSheet() {
+    if (!S.grid.length) { toast('请先生成图纸'); return; }
+    closeSheets();
+    try {
+      const link = await window.PindouShare.buildLink(S);
+      shareState = link;
+      const card = window.PindouShare.renderCard({
+        title: S.title || '拼豆图纸',
+        cols: S.cols, rows: S.rows, grid: S.grid, palette: S.palette,
+        brand: S.opts.brand, total: S.total,
+        colors: S.palette.filter(p => p.count > 0 && !S.excluded.has(p.code)).length,
+        url: link.url,
+      });
+      $('#shareCardImg').src = card.toDataURL('image/png');
+      $('#shareHint').textContent = link.url.length > 1400
+        ? '图纸较大，分享卡未放二维码；可以复制链接发给朋友。'
+        : '别人打开链接，就能看到同一张图纸。';
+      openSheet('sheetShare');
+      saveProject();
+    } catch (e) {
+      toast('生成分享失败，请重试');
+    }
+  }
+
+  async function copyShareLink() {
+    if (!shareState || !shareState.url) return;
+    const url = shareState.url;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast('分享链接已复制');
+    } catch (e) {
+      const ta = document.createElement('textarea');
+      ta.value = url;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); toast('分享链接已复制'); }
+      catch (err) { toast('复制失败，请手动选择链接'); }
+      ta.remove();
+    }
+  }
+
+  function downloadShareCard() {
+    const img = $('#shareCardImg');
+    if (!img.src) return;
+    const a = document.createElement('a');
+    a.href = img.src;
+    a.download = `${sanitizeName(S.title)}_分享卡.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    toast('分享卡已下载');
+  }
+
+  async function nativeShare() {
+    if (!shareState || !shareState.url) return;
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: S.title || '拼豆图纸',
+          text: '来看看这张拼豆图纸',
+          url: shareState.url,
+        });
+        return;
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+      }
+    }
+    copyShareLink();
+  }
+
+  async function loadSharedPattern(code) {
+    try {
+      const payload = await window.PindouShare.decodePayload(code);
+      const st = window.PindouShare.stateFromPayload(payload);
+      S.projectId = null;
+      S.title = st.title;
+      S.opts.brand = st.brand;
+      S.opts.cols = st.cols;
+      S.cols = st.cols;
+      S.rows = st.rows;
+      S.grid = st.grid;
+      S.palette = st.palette;
+      S.excluded = new Set();
+      S.history = [];
+      S.future = [];
+      S.gridBackup = null;
+      S.selected = 0;
+      S.sourceOriginal = null;
+      S.img = null;
+      S.imgFull = null;
+      S.sourceMode = 'image';
+      updateCounts();
+      $('#titleInput').value = S.title;
+      showView('workspace');
+      buildSettingsPanels();
+      S.fit = true;
+      fitToWindow();
+      updateAll();
+      toast('已打开分享的图纸');
+    } catch (e) {
+      toast('分享链接已损坏');
+    }
+  }
+
   /* ------------------------------------------------------------------ */
   /* 初始化                                                               */
   /* ------------------------------------------------------------------ */
+  function bindNewUI() {
+    $$('.mode-tab').forEach(btn => btn.addEventListener('click', () => setMode(btn.dataset.mode)));
+    $('#helpBtn').addEventListener('click', () => openSheet('sheetHelp'));
+    $('#proBtn').addEventListener('click', () => openSheet('sheetPro'));
+    $('#openShareBtn').addEventListener('click', () => {
+      closeSheets();
+      setTimeout(openShareSheet, 180);
+    });
+    $('#copyShareLink').addEventListener('click', copyShareLink);
+    $('#downloadShareCard').addEventListener('click', downloadShareCard);
+    $('#nativeShare').addEventListener('click', nativeShare);
+    $('#recentGrid').addEventListener('click', e => {
+      const del = e.target.closest('[data-delete]');
+      if (del) { e.stopPropagation(); deleteProject(del.dataset.delete); return; }
+      const card = e.target.closest('[data-project]');
+      if (card) loadProject(card.dataset.project);
+    });
+  }
+
   function init() {
     loadSettings();
     S.opts.cols = S.cols;
     initUpload();
     renderHomePresets();
+    setupTextMode();
+    setupTemplates();
     buildAdvanced();
     bindAdvanced();
     bindDisplay();
@@ -1682,6 +2394,7 @@
     bindSheets();
     bindExport();
     bindKeyboard();
+    bindNewUI();
     ['settingsDesktop', 'settingsMobile'].forEach(id => {
       const host = document.getElementById(id);
       host.addEventListener('click', onSettingsClick);
@@ -1691,6 +2404,12 @@
     syncAdvancedUI();
     updateHomeUI();
     $('#titleInput').value = '';
+    refreshRecent();
+    if ('serviceWorker' in navigator && /^https?:/.test(location.protocol)) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch(() => {});
+      });
+    }
     document.documentElement.dataset.booted = '1';
     bootHash();
   }

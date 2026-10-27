@@ -196,7 +196,15 @@
   }
 
   /* ---------- 采样 ---------- */
-  function downscale(src, w, h) {
+  function downscale(src, w, h, nearest) {
+    const out = document.createElement('canvas');
+    out.width = w; out.height = h;
+    const c = out.getContext('2d');
+    if (nearest) {
+      c.imageSmoothingEnabled = false;
+      c.drawImage(src, 0, 0, w, h);
+      return out;
+    }
     let cur = document.createElement('canvas');
     cur.width = src.width; cur.height = src.height;
     cur.getContext('2d').drawImage(src, 0, 0);
@@ -204,15 +212,12 @@
       const half = document.createElement('canvas');
       half.width = Math.max(1, Math.floor(cur.width / 2));
       half.height = Math.max(1, Math.floor(cur.height / 2));
-      const c = half.getContext('2d');
-      c.imageSmoothingEnabled = true;
-      c.imageSmoothingQuality = 'high';
-      c.drawImage(cur, 0, 0, half.width, half.height);
+      const hc = half.getContext('2d');
+      hc.imageSmoothingEnabled = true;
+      hc.imageSmoothingQuality = 'high';
+      hc.drawImage(cur, 0, 0, half.width, half.height);
       cur = half;
     }
-    const out = document.createElement('canvas');
-    out.width = w; out.height = h;
-    const c = out.getContext('2d');
     c.imageSmoothingEnabled = true;
     c.imageSmoothingQuality = 'high';
     c.drawImage(cur, 0, 0, w, h);
@@ -220,7 +225,7 @@
   }
 
   function sampleCells(work, cols, rows, opts) {
-    const big = downscale(work, cols * 2, rows * 2);
+    const big = downscale(work, cols * 2, rows * 2, !!(opts && opts.flat));
     const data = big.getContext('2d').getImageData(0, 0, cols * 2, rows * 2).data;
     const pixels = [];
     const pixelAt = [];
@@ -232,39 +237,58 @@
       for (let x = 0; x < cols; x++) {
         let sr = 0, sg = 0, sb = 0, sa = 0;
         const subs = [];
+        const colorSubs = [];
         for (let dy = 0; dy < 2; dy++) {
           for (let dx = 0; dx < 2; dx++) {
             const i = ((y * 2 + dy) * (cols * 2) + (x * 2 + dx)) * 4;
             const a = data[i + 3];
             sr += data[i] * a; sg += data[i + 1] * a; sb += data[i + 2] * a; sa += a;
-            if (a >= 32) subs.push({ r: data[i], g: data[i + 1], b: data[i + 2] });
+            if (a >= 32) {
+              const sp = { r: data[i], g: data[i + 1], b: data[i + 2] };
+              subs.push(sp);
+              if (!(t > 0 && sp.r >= t && sp.g >= t && sp.b >= t)) colorSubs.push(sp);
+            }
           }
         }
         let px = null, nw = false;
         if (sa >= 510) {
-          let r, g, b;
-          if (opts.sampling === 'dominant' && subs.length) {
-            const freq = new Map();
-            for (const s of subs) {
-              const key = (s.r >> 4) * 256 + (s.g >> 4) * 16 + (s.b >> 4);
-              let f = freq.get(key);
-              if (!f) { f = [0, 0, 0, 0]; freq.set(key, f); }
-              f[0] += s.r; f[1] += s.g; f[2] += s.b; f[3]++;
-            }
-            let best = null;
-            for (const f of freq.values()) if (!best || f[3] > best[3]) best = f;
-            r = Math.round(best[0] / best[3]);
-            g = Math.round(best[1] / best[3]);
-            b = Math.round(best[2] / best[3]);
-          } else {
-            r = Math.round(sr / sa); g = Math.round(sg / sa); b = Math.round(sb / sa);
-          }
-          if (t > 0 && r >= t && g >= t && b >= t) {
+          // 白底图边缘去灰：边缘格若一半以上是白色，直接留空；否则只用非白子像素取色
+          const cleanEdge = !!opts.edgeClean && t > 0 && subs.length > 0;
+          if (cleanEdge && colorSubs.length < 2) {
             nw = true;
-            if (!opts.boundary) px = null;
-            else px = { r, g, b };
+            px = null;
           } else {
-            px = { r, g, b };
+            const use = cleanEdge && colorSubs.length ? colorSubs : subs;
+            let r, g, b;
+            if (opts.sampling === 'dominant' && use.length) {
+              const freq = new Map();
+              for (const s of use) {
+                const key = (s.r >> 4) * 256 + (s.g >> 4) * 16 + (s.b >> 4);
+                let f = freq.get(key);
+                if (!f) { f = [0, 0, 0, 0]; freq.set(key, f); }
+                f[0] += s.r; f[1] += s.g; f[2] += s.b; f[3]++;
+              }
+              let best = null;
+              for (const f of freq.values()) if (!best || f[3] > best[3]) best = f;
+              r = Math.round(best[0] / best[3]);
+              g = Math.round(best[1] / best[3]);
+              b = Math.round(best[2] / best[3]);
+            } else if (cleanEdge && colorSubs.length) {
+              let cr = 0, cg = 0, cb = 0;
+              for (const s of colorSubs) { cr += s.r; cg += s.g; cb += s.b; }
+              r = Math.round(cr / colorSubs.length);
+              g = Math.round(cg / colorSubs.length);
+              b = Math.round(cb / colorSubs.length);
+            } else {
+              r = Math.round(sr / sa); g = Math.round(sg / sa); b = Math.round(sb / sa);
+            }
+            if (t > 0 && r >= t && g >= t && b >= t) {
+              nw = true;
+              if (!opts.boundary) px = null;
+              else px = { r, g, b };
+            } else {
+              px = { r, g, b };
+            }
           }
         }
         if (px) pixels.push(px);
