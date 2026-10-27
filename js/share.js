@@ -28,7 +28,7 @@
   /* ---------- 压缩（有 CompressionStream 时用 deflate） ---------- */
   async function encodePayload(obj) {
     const raw = enc.encode(JSON.stringify(obj));
-    if (window.CompressionStream) {
+    if (window.CompressionStream && window.DecompressionStream) {
       try {
         const stream = new Blob([raw]).stream().pipeThrough(new CompressionStream('deflate-raw'));
         const buf = await new Response(stream).arrayBuffer();
