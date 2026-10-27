@@ -498,7 +498,7 @@
       }
     }
 
-    if (S.display.code && S.opts.labelMode !== 'none' && cell >= 13) {
+    if (S.display.code && S.opts.labelMode !== 'none' && cell >= 16) {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       for (let y = 0; y < S.rows; y++) {
@@ -565,6 +565,16 @@
 
     layoutCanvas();
     updateZoomUI();
+    updateCanvasHint();
+  }
+
+  function updateCanvasHint() {
+    const hint = $('#canvasHint');
+    if (!hint) return;
+    const codesHidden = S.display.code && S.opts.labelMode !== 'none' && S.cell < 16;
+    hint.textContent = codesHidden
+      ? '放大到 16px/格以上显示色号 · 空格拖动 · 右键擦除'
+      : '空格 + 拖动平移 · 右键擦除 · ⌘Z 撤销';
   }
 
   const SYMBOLS = (function () {
