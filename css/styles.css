@@ -1172,6 +1172,7 @@ input[type="text"]:focus {
 .work-meta { font-size: 12.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .work-tags { display: flex; gap: 6px; flex-wrap: wrap; }
 .work-palette { display: flex; gap: 6px; flex-wrap: wrap; }
+.action-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .wp {
   display: flex;
   align-items: center;
