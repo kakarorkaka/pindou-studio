@@ -33,6 +33,7 @@
         <span class="brand-name serif">拼豆工作室</span>
       </div>
       <div class="home-actions">
+        <button class="link-btn" id="galleryBtn" type="button">作品墙</button>
         <button class="link-btn only-desktop" id="proBtn" type="button">Pro</button>
         <button class="icon-btn" id="helpBtn" type="button" aria-label="使用指南" title="使用指南">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="8.6"/><path d="M9.4 9.1c0-1.7 1.3-2.8 2.9-2.8 1.7 0 2.9 1.1 2.9 2.6 0 1.9-2.6 2.1-2.6 4.2"/><path d="M12.6 16.8v.2"/></svg>
@@ -171,6 +172,15 @@
         <div class="recent-grid" id="recentGrid"></div>
       </section>
 
+      <!-- 作品墙精选 -->
+      <section class="featured hidden" id="featuredSection" aria-label="作品墙精选">
+        <div class="recent-head">
+          <h2 class="serif">作品墙精选</h2>
+          <button class="link-btn" id="viewGalleryBtn" type="button">查看全部 →</button>
+        </div>
+        <div class="featured-grid" id="featuredGrid"></div>
+      </section>
+
     </main>
   </section>
 
@@ -282,6 +292,36 @@
       </button>
     </nav>
   </section>
+
+  <!-- ============================ 作品墙 ============================ -->
+  <section class="view view-gallery hidden" id="viewGallery">
+    <header class="gallery-head">
+      <button class="icon-btn" id="galleryBack" type="button" aria-label="返回首页">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M14.5 5.5L8 12l6.5 6.5"/></svg>
+      </button>
+      <div class="gallery-title-wrap">
+        <h1 class="serif">作品墙</h1>
+        <p>精选图纸 · 点「拼同款」直接开工</p>
+      </div>
+      <button class="btn btn-primary btn-sm" id="galleryPublishBtn" type="button">发布作品</button>
+    </header>
+    <div class="gallery-body">
+      <div class="gallery-controls">
+        <div class="gallery-tabs" role="tablist" aria-label="排序">
+          <button class="g-tab active" data-sort="featured" type="button" role="tab" aria-selected="true">精选</button>
+          <button class="g-tab" data-sort="new" type="button" role="tab" aria-selected="false">最新</button>
+        </div>
+        <label class="gallery-search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg>
+          <input id="gallerySearch" type="search" placeholder="搜索标题或标签" autocomplete="off">
+        </label>
+      </div>
+      <div class="gallery-filters" id="galleryFilters"></div>
+      <div class="gallery-grid" id="galleryGrid"></div>
+      <div class="gallery-empty hidden" id="galleryEmpty">没有找到作品，换个关键词试试。</div>
+      <p class="gallery-note">内测精选作品 · 投稿审核后展示 · 所有图纸均可在工作台继续编辑</p>
+    </div>
+  </section>
 </div>
 
 <!-- ============================ 浮层 ============================ -->
@@ -311,6 +351,7 @@
       <button class="btn btn-ghost btn-block" id="exportPrint" type="button">打印图纸（100% 缩放）</button>
       <button class="btn btn-ghost btn-block" id="exportCsv" type="button">购物清单 CSV</button>
       <button class="btn btn-ghost btn-block" id="openShareBtn" type="button">分享图纸 / 生成分享卡</button>
+      <button class="btn btn-ghost btn-block" id="openPublishBtn" type="button">发布到作品墙</button>
     </div>
     <p class="sheet-tip">A4 纸可放下约 29×29 格的图纸；更大请用 A3 或分页打印。打印时请选择 100% 缩放。</p>
   </div>
@@ -337,6 +378,71 @@
   </div>
 </section>
 
+<section class="sheet sheet-wide" id="sheetWork" role="dialog" aria-modal="true" aria-labelledby="workTitle" hidden>
+  <div class="sheet-head">
+    <h2 class="serif" id="workTitle">作品</h2>
+    <button class="icon-btn" data-close type="button" aria-label="关闭">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="sheet-body">
+    <div class="work-preview"><img id="workImage" alt="作品图纸预览"></div>
+    <div class="work-meta" id="workMeta"></div>
+    <div class="work-author" id="workAuthor"></div>
+    <div class="work-tags" id="workTags"></div>
+    <div class="work-palette" id="workPalette"></div>
+    <div class="sheet-actions">
+      <button class="btn btn-primary btn-block" id="workMake" type="button">拼同款</button>
+      <button class="btn btn-ghost btn-block" id="workRemix" type="button">改同款（保留署名）</button>
+      <button class="btn btn-ghost btn-block" id="workCollect" type="button">收藏</button>
+      <button class="btn btn-ghost btn-block" id="workShare" type="button">复制作品链接</button>
+    </div>
+    <p class="sheet-tip">内测精选作品 · 点「拼同款」可直接载入工作台编辑与导出。</p>
+  </div>
+</section>
+
+<section class="sheet" id="sheetPublish" role="dialog" aria-modal="true" aria-labelledby="publishTitle" hidden>
+  <div class="sheet-head">
+    <h2 class="serif" id="publishTitle">发布到作品墙</h2>
+    <button class="icon-btn" data-close type="button" aria-label="关闭">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="sheet-body">
+    <div class="publish-preview"><img id="publishCardImg" alt="分享卡预览"></div>
+    <label class="field-group">
+      <span class="field-label">作品名</span>
+      <input type="text" id="publishTitleInput" maxlength="30" placeholder="例如：小熊猫挂件">
+    </label>
+    <label class="field-group">
+      <span class="field-label">标签（用逗号分隔，最多 5 个）</span>
+      <input type="text" id="publishTagsInput" placeholder="动物, 新手, 挂件">
+    </label>
+    <label class="field-group">
+      <span class="field-label">分类</span>
+      <select class="select" id="publishCategory">
+        <option value="动物">动物</option>
+        <option value="植物">植物</option>
+        <option value="节日">节日</option>
+        <option value="文字">文字</option>
+        <option value="新手">新手</option>
+        <option value="其他">其他</option>
+      </select>
+    </label>
+    <label class="check-inline">
+      <input type="checkbox" id="publishRights">
+      我拥有该图案的权利或已获授权，同意在作品墙展示
+    </label>
+    <p class="sheet-note">内测采用审核制：投稿需 GitHub 账号，通过后出现在作品墙（1–3 天）。没有账号可先复制文案发小红书。</p>
+    <div class="sheet-actions">
+      <button class="btn btn-primary btn-block" id="submitWork" type="button">提交审核</button>
+      <button class="btn btn-ghost btn-block" id="copyCaption" type="button">复制小红书文案</button>
+      <button class="btn btn-ghost btn-block" id="downloadPublishCard" type="button">下载分享卡</button>
+    </div>
+    <p class="sheet-tip" id="publishHint">提交会打开 GitHub 投稿页（内测通道），分享链接会自动填入。</p>
+  </div>
+</section>
+
 <section class="sheet" id="sheetHelp" role="dialog" aria-modal="true" aria-labelledby="helpTitle" hidden>
   <div class="sheet-head">
     <h2 class="serif" id="helpTitle">使用指南</h2>
@@ -357,6 +463,7 @@
       <details><summary>作品存在哪里？</summary><p>仅保存在当前浏览器的本地数据库（IndexedDB），清除浏览器数据会丢失；不会同步到云端。</p></details>
       <details><summary>怎么分享给朋友？</summary><p>在工作台点「导出图纸」→「分享图纸」：可以下载带二维码的分享卡，或复制一个能还原图纸的链接。</p></details>
       <details><summary>能装到手机桌面吗？</summary><p>可以。Chrome：菜单 →「添加到主屏幕」；Safari：分享 →「添加到主屏幕」。安装后可离线使用已加载的页面。</p></details>
+      <details><summary>作品墙怎么投稿？</summary><p>完成图纸后点「导出图纸 → 发布到作品墙」，填写信息并确认权利声明。内测投稿需要 GitHub 账号，审核通过后展示在作品墙。</p></details>
     </div>
     <p class="sheet-tip only-desktop">快捷键：B 画笔 · E 橡皮 · I 取色 · H 移动 · F 适应窗口 · G 网格 · ⌘Z 撤销 · ⌘E 导出</p>
   </div>
@@ -441,6 +548,7 @@
 <script src="js/engine.js"></script>
 <script src="js/qrcode.js"></script>
 <script src="js/templates.js"></script>
+<script src="js/community-works.js"></script>
 <script src="js/share.js"></script>
 <script src="js/projects.js"></script>
 <script src="js/app.js"></script>

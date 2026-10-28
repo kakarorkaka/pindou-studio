@@ -21,6 +21,8 @@
 - **完整交付**：PNG 图纸（含标题、坐标、色号、图例、统计）、100% 缩放打印、购物清单 CSV
 - **分享传播**：分享卡（1080×1350，带二维码）+ 能还原图纸的分享链接（deflate 压缩）
 - **本地作品库**：自动保存、最近作品、一键恢复编辑（IndexedDB，仅存本机）
+- **作品墙**：精选可拼图纸，点「拼同款」直接载入工作台；支持搜索/分类/收藏
+- **发布素材**：分享卡 + 小红书文案 + 二维码；审核制投稿，通过后上墙
 - **离线可用**：PWA manifest + Service Worker，可添加到主屏幕
 - **隐私**：图片不上传、无账号、无埋点
 
@@ -30,8 +32,8 @@
 |---|---|
 | ![文字图纸](docs/screenshots/workspace-text-mobile.png) | ![模板图纸](docs/screenshots/workspace-template-desktop.png) |
 | 文字转图纸（40 × 10，1 色） | 模板转图纸（爱心，2 色） |
-| ![分享卡](docs/screenshots/share-card.png) | ![手机首页](docs/screenshots/home-mobile-375.png) |
-| 分享卡（含二维码） | 手机端首页（375px） |
+| ![作品墙](docs/screenshots/gallery-desktop.png) | ![分享卡](docs/screenshots/share-card.png) |
+| 作品墙（精选图纸） | 分享卡（含二维码） |
 
 ![导出图纸](docs/screenshots/chart-export.png)
 
@@ -98,15 +100,23 @@ python3 -m http.server 8000
 │   ├── colorData.js        # 205 色 × 5 品牌
 │   ├── engine.js           # 图片 → 网格 → 色号 → 图纸
 │   ├── templates.js        # 内置模板绘制
+│   ├── community-works.js  # 作品墙精选数据
 │   ├── qrcode.js           # 二维码（MIT, qrcode-generator）
 │   ├── share.js            # 分享链接压缩 / 分享卡渲染
 │   ├── projects.js         # IndexedDB 作品库
 │   └── app.js              # 交互、状态、导出
-├── assets/                 # 示例图、图标、favicon
+├── assets/                 # 示例图、图标、favicon、作品缩略图
 └── docs/
     ├── product-plan.md     # 产品进阶方案
+    ├── community.md        # 作品墙投稿与审核说明
     └── screenshots/        # 界面截图
 ```
+
+## 作品墙与投稿
+
+作品墙采用**审核制**：在工作台点「导出图纸 → 发布到作品墙」，填写信息并确认权利声明后，会打开 [pindou-community](https://github.com/kakarorkaka/pindou-community/issues/new) 的投稿 Issue；审核通过后加入精选作品墙。
+
+详细审核标准、数据结构与下架规则见 [docs/community.md](docs/community.md)。
 
 ## 浏览器支持
 

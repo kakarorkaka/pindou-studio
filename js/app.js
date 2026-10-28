@@ -32,7 +32,8 @@
 
   const S = {
     img: null, imgFull: null, imgName: '', imgW: 0, imgH: 0,
-    sourceOriginal: null, sourceMode: 'image', whiteBg: false, mode: 'image',
+    sourceOriginal: null, sourceMode: 'image', whiteBg: false,
+    remixOf: null, gallerySort: 'featured', galleryCat: 'all', galleryQuery: '', mode: 'image',
     text: '', textColor: '#2F2B2F', textOutline: true, templateId: null,
     projectId: null,
     cols: 40, rows: 40, total: 0, empty: 0,
@@ -288,11 +289,15 @@
   function showView(name) {
     $('#viewHome').classList.toggle('hidden', name !== 'home');
     $('#viewWorkspace').classList.toggle('hidden', name !== 'workspace');
+    $('#viewGallery').classList.toggle('hidden', name !== 'gallery');
     if (name === 'workspace') {
       requestAnimationFrame(() => {
         drawPreview();
         layoutCanvas();
       });
+    }
+    if (name === 'gallery') {
+      renderGallery();
     }
   }
 
@@ -1867,6 +1872,18 @@
 
   function bootHash() {
     const hash = location.hash;
+    if (hash === '#gallery') {
+      openGallery();
+      document.documentElement.dataset.ready = '1';
+      return;
+    }
+    const workMatch = /^#g=([A-Za-z0-9_-]+)/.exec(hash);
+    if (workMatch) {
+      openGallery();
+      openWork(workMatch[1]);
+      document.documentElement.dataset.ready = '1';
+      return;
+    }
     const shared = window.PindouShare.readHashPayload();
     if (shared) {
       loadSharedPattern(shared);
@@ -1908,6 +1925,11 @@
         document.documentElement.dataset.ready = '1';
         return;
       }
+      if (mode === 'gallery') {
+        openGallery();
+        document.documentElement.dataset.ready = '1';
+        return;
+      }
       loadSample().then(() => {
         if (mode === 'calibrate') { document.documentElement.dataset.ready = '1'; return; }
         generateAndOpen();
@@ -1918,6 +1940,7 @@
         if (mode === 'share') { openShareSheet(); }
         if (mode === 'help') { openSheet('sheetHelp'); }
         if (mode === 'pro') { openSheet('sheetPro'); }
+        if (mode === 'publish') { openPublish(); }
         document.documentElement.dataset.ready = '1';
       });
     } else if (hash === '#printdump') {
@@ -2342,6 +2365,7 @@
       S.img = null;
       S.imgFull = null;
       S.sourceMode = 'image';
+      S.remixOf = null;
       updateCounts();
       $('#titleInput').value = S.title;
       showView('workspace');
@@ -2353,6 +2377,292 @@
     } catch (e) {
       toast('分享链接已损坏');
     }
+  }
+
+
+  /* ------------------------------------------------------------------ */
+  /* 作品墙                                                               */
+  /* ------------------------------------------------------------------ */
+  const COMMUNITY_REPO = 'https://github.com/kakarorkaka/pindou-community';
+  const COLLECT_KEY = 'pindou-collects';
+  let currentWork = null;
+  let publishState = null;
+
+  function works() { return window.PINDOU_WORKS || []; }
+
+  function getCollects() {
+    try { return new Set(JSON.parse(localStorage.getItem(COLLECT_KEY) || '[]')); }
+    catch (e) { return new Set(); }
+  }
+  function saveCollects(set) {
+    try { localStorage.setItem(COLLECT_KEY, JSON.stringify([...set])); } catch (e) { /* ignore */ }
+  }
+
+  function categories() {
+    const set = new Set(['全部']);
+    works().forEach(w => { if (w.category) set.add(w.category); });
+    return [...set];
+  }
+
+  function filteredWorks() {
+    let list = works().slice();
+    if (S.galleryCat !== 'all') {
+      list = list.filter(w => w.category === S.galleryCat || (w.tags || []).includes(S.galleryCat));
+    }
+    const q = S.galleryQuery.trim().toLowerCase();
+    if (q) {
+      list = list.filter(w => (w.title + ' ' + (w.tags || []).join(' ')).toLowerCase().includes(q));
+    }
+    if (S.gallerySort === 'new') {
+      list.sort((a, b) => (b.order || 0) - (a.order || 0));
+    } else {
+      list.sort((a, b) => (b.featured || 0) - (a.featured || 0) || (b.order || 0) - (a.order || 0));
+    }
+    return list;
+  }
+
+  function workCard(w, compact) {
+    return `
+      <article class="work-card" data-work="${w.id}" tabindex="0">
+        <div class="work-thumb-wrap"><img class="work-thumb" loading="lazy" src="${w.thumb}" alt="${escapeHtml(w.title)}"></div>
+        <div class="work-card-body">
+          <div class="work-card-title">${escapeHtml(w.title)}</div>
+          <div class="work-card-meta">${w.cols} × ${w.rows} · ${fmtNum(w.total)} 颗 · ${w.colors} 色</div>
+          <div class="work-card-tags">${(w.tags || []).slice(0, 3).map(t => `<span class="work-tag">${escapeHtml(t)}</span>`).join('')}</div>
+          <div class="work-card-author">@${escapeHtml(w.author || '拼豆工作室')}</div>
+          ${compact ? '' : `<button class="btn btn-ghost make-btn" type="button" data-make="${w.id}">拼同款</button>`}
+        </div>
+      </article>`;
+  }
+
+  function renderGallery() {
+    const grid = $('#galleryGrid');
+    if (!grid) return;
+    if (!grid.dataset.bound) {
+      grid.dataset.bound = '1';
+      grid.addEventListener('click', e => {
+        const make = e.target.closest('[data-make]');
+        if (make) { e.stopPropagation(); const w = works().find(x => x.id === make.dataset.make); if (w) makeWork(w, false); return; }
+        const card = e.target.closest('[data-work]');
+        if (card) openWork(card.dataset.work);
+      });
+      grid.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          const card = e.target.closest('[data-work]');
+          if (card) { e.preventDefault(); openWork(card.dataset.work); }
+        }
+      });
+    }
+    const filters = $('#galleryFilters');
+    if (!filters.dataset.bound) {
+      filters.dataset.bound = '1';
+      filters.innerHTML = categories().map(c => `<button class="g-filter ${c === '全部' ? 'active' : ''}" type="button" data-cat="${c}">${c}</button>`).join('');
+      filters.addEventListener('click', e => {
+        const b = e.target.closest('[data-cat]');
+        if (!b) return;
+        S.galleryCat = b.dataset.cat === '全部' ? 'all' : b.dataset.cat;
+        $$('.g-filter', filters).forEach(x => x.classList.toggle('active', x === b));
+        renderGallery();
+      });
+    }
+    const list = filteredWorks();
+    grid.innerHTML = list.map(w => workCard(w, false)).join('');
+    $('#galleryEmpty').classList.toggle('hidden', list.length > 0);
+  }
+
+  function renderFeatured() {
+    const host = $('#featuredGrid');
+    const sec = $('#featuredSection');
+    if (!host || !sec) return;
+    const list = works().slice().sort((a, b) => (b.featured || 0) - (a.featured || 0) || (b.order || 0) - (a.order || 0)).slice(0, 4);
+    if (!list.length) { sec.classList.add('hidden'); return; }
+    host.innerHTML = list.map(w => workCard(w, true)).join('');
+    host.onclick = e => {
+      const card = e.target.closest('[data-work]');
+      if (card) openWork(card.dataset.work);
+    };
+    sec.classList.remove('hidden');
+  }
+
+  function openGallery() {
+    renderFeatured();
+    showView('gallery');
+  }
+
+  function openWork(id) {
+    const w = works().find(x => x.id === id);
+    if (!w) return;
+    currentWork = w;
+    $('#workTitle').textContent = w.title;
+    $('#workImage').src = w.thumb;
+    $('#workMeta').textContent = `${w.cols} × ${w.rows} · ${fmtNum(w.total)} 颗 · ${w.colors} 色 · ${w.brand}`;
+    $('#workAuthor').textContent = `@${w.author || '拼豆工作室'}`;
+    $('#workTags').innerHTML = (w.tags || []).map(t => `<span class="work-tag">${escapeHtml(t)}</span>`).join('');
+    $('#workPalette').innerHTML = (w.preview || []).map(p =>
+      `<span class="wp"><i style="background:${p.hex}"></i>${p.code} · ${fmtNum(p.count)} 颗</span>`).join('');
+    const collected = getCollects().has(w.id);
+    $('#workCollect').textContent = collected ? '已收藏' : '收藏';
+    openSheet('sheetWork');
+  }
+
+  async function makeWork(w, remix) {
+    if (!w) return;
+    closeSheets();
+    await loadSharedPattern(w.code);
+    S.remixOf = remix ? w : null;
+    if (remix) toast(`已载入，改编自「${w.title}」，发布时请保留署名`);
+    else toast('已载入同款图纸');
+  }
+
+  async function copyWorkLink(w) {
+    const url = location.href.split('#')[0] + '#g=' + w.id;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast('作品链接已复制');
+    } catch (e) {
+      toast('复制失败，请手动复制地址栏链接');
+    }
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* 发布到作品墙                                                         */
+  /* ------------------------------------------------------------------ */
+  function fillPublishForm() {
+    const title = S.title || '未命名作品';
+    $('#publishTitleInput').value = title;
+    const cat = S.sourceMode === 'text' ? '文字' : S.sourceMode === 'template' ? '其他' : '动物';
+    $('#publishCategory').value = cat;
+    const tags = S.sourceMode === 'template'
+      ? (window.PindouTemplates.get(S.templateId) ? '模板, 新手' : '模板')
+      : S.sourceMode === 'text' ? '文字, 祝福' : '图片, 挂件';
+    $('#publishTagsInput').value = tags;
+    $('#publishRights').checked = false;
+  }
+
+  async function openPublish() {
+    if (!S.grid.length) { toast('请先生成一张图纸'); return; }
+    closeSheets();
+    const link = await window.PindouShare.buildLink(S);
+    const card = window.PindouShare.renderCard({
+      title: S.title || '拼豆图纸',
+      cols: S.cols, rows: S.rows, grid: S.grid, palette: S.palette,
+      brand: S.opts.brand, total: S.total,
+      colors: S.palette.filter(p => p.count > 0).length,
+      url: link.url,
+    });
+    publishState = { link, card };
+    $('#publishCardImg').src = card.toDataURL('image/png');
+    fillPublishForm();
+    openSheet('sheetPublish');
+  }
+
+  function submissionText() {
+    const title = ($('#publishTitleInput').value || S.title || '未命名作品').trim();
+    const tags = ($('#publishTagsInput').value || '').split(/[,，]/).map(t => t.trim()).filter(Boolean).slice(0, 5);
+    const cat = $('#publishCategory').value;
+    const colors = S.palette.filter(p => p.count > 0).length;
+    const remix = S.remixOf ? `改编自：${S.remixOf.title}（${S.remixOf.id}）\n` : '';
+    const body = [
+      '【作品投稿】',
+      `标题：${title}`,
+      `分类：${cat}`,
+      `标签：${tags.join('、')}`,
+      `规格：${S.cols}×${S.rows} · ${fmtNum(S.total)} 颗 · ${colors} 色 · ${S.opts.brand}`,
+      `分享链接：${publishState.link.url}`,
+      remix + '权利声明：本人拥有该图案的权利或已获授权，同意在拼豆工作室作品墙展示。',
+    ].join('\n');
+    const url = `${COMMUNITY_REPO}/issues/new?title=${encodeURIComponent('作品投稿：' + title)}&body=${encodeURIComponent(body)}&labels=submission`;
+    return { body, url, title, tags, cat };
+  }
+
+  async function submitWork() {
+    if (!$('#publishRights').checked) {
+      toast('请先确认权利声明');
+      return;
+    }
+    const { body, url } = submissionText();
+    // 先同步打开窗口，避免 await 之后被浏览器拦截
+    const win = window.open(url, '_blank');
+    if (win) win.opener = null;
+    navigator.clipboard.writeText(body).catch(() => {});
+    if (win) {
+      $('#publishHint').textContent = '已打开投稿页，提交后等待审核（1–3 天）。';
+      toast('已打开投稿页，提交后等待审核');
+    } else {
+      $('#publishHint').innerHTML = `弹窗被拦截。请<a href="${url}" target="_blank" rel="noopener">点此打开投稿页</a>，投稿内容已复制。`;
+      toast('弹窗被拦截，请点提示里的链接');
+    }
+  }
+
+  function publishCaption() {
+    const title = ($('#publishTitleInput').value || S.title || '拼豆图纸').trim();
+    const cat = $('#publishCategory').value;
+    const colors = S.palette.filter(p => p.count > 0).length;
+    return [
+      `【${title}】${S.cols}×${S.rows} · ${fmtNum(S.total)} 颗 · ${colors} 色`,
+      '一张可以照着拼的拼豆图纸，链接打开就能拼同款：',
+      publishState.link.url,
+      `#拼豆 #拼豆图纸 #手工 #DIY #${cat}`,
+    ].join('\n');
+  }
+
+  async function copyPublishCaption() {
+    try {
+      await navigator.clipboard.writeText(publishCaption());
+      toast('小红书文案已复制');
+    } catch (e) {
+      toast('复制失败，请重试');
+    }
+  }
+
+  function downloadPublishCard() {
+    if (!publishState) return;
+    const a = document.createElement('a');
+    a.href = publishState.card.toDataURL('image/png');
+    a.download = `${sanitizeName(S.title)}_分享卡.png`;
+    a.click();
+    toast('分享卡已下载');
+  }
+
+  function bindGallery() {
+    $('#galleryBtn').addEventListener('click', openGallery);
+    $('#viewGalleryBtn').addEventListener('click', openGallery);
+    $('#galleryBack').addEventListener('click', () => {
+      showView('home');
+      updateHomeUI();
+      refreshRecent();
+    });
+    $('#galleryPublishBtn').addEventListener('click', () => {
+      if (!S.grid.length) { toast('先做一张图纸，再来发布'); showView('home'); return; }
+      openPublish();
+    });
+    $$('.g-tab').forEach(tab => tab.addEventListener('click', () => {
+      S.gallerySort = tab.dataset.sort;
+      $$('.g-tab').forEach(t => {
+        t.classList.toggle('active', t === tab);
+        t.setAttribute('aria-selected', t === tab ? 'true' : 'false');
+      });
+      renderGallery();
+    }));
+    $('#gallerySearch').addEventListener('input', e => {
+      S.galleryQuery = e.target.value;
+      renderGallery();
+    });
+    $('#workMake').addEventListener('click', () => { if (currentWork) makeWork(currentWork, false); });
+    $('#workRemix').addEventListener('click', () => { if (currentWork) makeWork(currentWork, true); });
+    $('#workCollect').addEventListener('click', () => {
+      if (!currentWork) return;
+      const set = getCollects();
+      if (set.has(currentWork.id)) set.delete(currentWork.id); else set.add(currentWork.id);
+      saveCollects(set);
+      $('#workCollect').textContent = set.has(currentWork.id) ? '已收藏' : '收藏';
+    });
+    $('#workShare').addEventListener('click', () => { if (currentWork) copyWorkLink(currentWork); });
+    $('#openPublishBtn').addEventListener('click', openPublish);
+    $('#submitWork').addEventListener('click', submitWork);
+    $('#copyCaption').addEventListener('click', copyPublishCaption);
+    $('#downloadPublishCard').addEventListener('click', downloadPublishCard);
+    renderFeatured();
   }
 
   /* ------------------------------------------------------------------ */
@@ -2395,6 +2705,7 @@
     bindExport();
     bindKeyboard();
     bindNewUI();
+    bindGallery();
     ['settingsDesktop', 'settingsMobile'].forEach(id => {
       const host = document.getElementById(id);
       host.addEventListener('click', onSettingsClick);
@@ -2421,5 +2732,7 @@
     S, loadSample, generateAndOpen, generatePattern, setCols, setTool,
     excludeColor, restoreAll, undo, redo, fitToWindow, openSheet, closeSheets,
     drawPreview, collectSummary, makeChart, setZoom,
+    setMode, selectTemplate, buildTextSource, loadSharedPattern,
+    openGallery, openWork, openPublish, submissionText, makeWork,
   };
 })();
