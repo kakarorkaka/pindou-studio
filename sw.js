@@ -1,5 +1,5 @@
 /* 拼豆工作室 Service Worker：离线可用 */
-const CACHE = 'pindou-studio-v7';
+const CACHE = 'pindou-studio-v8';
 const ASSETS = [
   './',
   'index.html',

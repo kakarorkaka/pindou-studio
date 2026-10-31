@@ -122,7 +122,7 @@
     S.img = c;
   }
 
-  /* 画面风格：原图 / 卡通 / 像素 / 剪影 */
+  /* 图片风格：仅保留原图；AI 像素化作为独立处理 */
   function applyStyle(src, style) {
     if (!src || style === 'original') return src;
     const w = src.width, h = src.height;
@@ -264,6 +264,7 @@
       const raw = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
       if (!raw) return;
       if (raw.opts) S.opts = { ...DEFAULTS, ...raw.opts };
+      S.opts.style = 'original';
       if (raw.display) S.display = { ...DEFAULT_DISPLAY, ...raw.display };
       if (raw.cols) S.cols = clamp(raw.cols, 8, 400);
       S.opts.cols = S.cols;
@@ -383,9 +384,7 @@
         S.whiteBg = detectWhiteBg(c);
         S.projectId = null;
         S.title = '';
-        aiOriginal = null;
-        aiCandidate = null;
-        $('#aiRestoreBtn').classList.add('hidden');
+        resetAIState();
         refreshSource();
         S.imgName = file.name.replace(/\.[^.]+$/, '');
         if (!S.title) S.title = S.imgName;
@@ -443,15 +442,12 @@
   let cropState = null;
   let cropDrag = null;
 
-  /* ---------- 混元 AI 风格化 ---------- */
-  const AI_PRESETS = [
-    { id: 'cartoon', label: '日系卡通', desc: '白底 + 平涂' },
-    { id: 'pixel', label: '复古像素', desc: '白底 + 32-bit' },
-  ];
+  /* ---------- 混元 AI 像素化 ---------- */
   let aiBase = '';
-  let aiPreset = 'cartoon';
   let aiCandidate = null;
   let aiOriginal = null;
+  let aiResultCanvas = null;
+  let imageMode = 'original';
   let aiBusy = false;
   let aiTimer = null;
   let aiReady = false;
@@ -473,28 +469,6 @@
         ctx.fillRect(x * cell, y * cell, cell, cell);
       }
     }
-  }
-
-  function renderStyleChips() {
-    const host = $('#ipStyles');
-    if (!host) return;
-    host.innerHTML = '';
-    const defs = [['original', '原图'], ['cartoon', '卡通'], ['pixel', '像素'], ['silhouette', '剪影']];
-    defs.forEach(([style, label]) => {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.dataset.style = style;
-      b.className = 'style-chip' + (S.opts.style === style ? ' active' : '');
-      b.textContent = label;
-      b.addEventListener('click', () => {
-        if (S.opts.style === style) return;
-        S.opts.style = style;
-        saveSettings();
-        refreshSource();
-        updateHomeUI();
-      });
-      host.appendChild(b);
-    });
   }
 
   function schedulePreview() {
@@ -595,10 +569,10 @@
     $('#calibrateNote').textContent = '先看效果，再选尺寸';
     if (force || S._previewSrc !== S.sourceOriginal) {
       S._previewSrc = S.sourceOriginal;
-      $('#ipOriginal').src = S.sourceOriginal.toDataURL('image/jpeg', 0.82);
-      renderStyleChips();
+      const original = aiOriginal || S.sourceOriginal;
+      $('#ipOriginal').src = original.toDataURL('image/jpeg', 0.82);
     }
-    $$('#ipStyles .style-chip').forEach(b => b.classList.toggle('active', b.dataset.style === S.opts.style));
+    syncImageModeUI();
     $('#ipBlank').checked = !!S.opts.blank;
     if (!PREVIEW_SIZES.some(p => p.size === S.cols)) {
       S.cols = 40;
@@ -609,7 +583,57 @@
   }
 
 
-  /* ---------- AI 风格化：混元生图 ---------- */
+  function syncImageModeUI() {
+    $$('#imageModeTabs .image-mode').forEach(b => {
+      const on = b.dataset.imageMode === imageMode;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    const aiTab = $('#imageModeTabs [data-image-mode="ai"]');
+    if (aiTab) aiTab.classList.toggle('has-result', !!aiResultCanvas);
+    const note = $('#imageModeNote');
+    if (note) {
+      note.textContent = imageMode === 'ai'
+        ? 'AI 像素化已应用；再点一次可以重新生成。'
+        : (aiResultCanvas ? 'AI 像素图已生成，点「AI 像素化」切换。' : 'AI 像素化会自动白底，生成后直接进四档图纸。');
+    }
+  }
+
+  function applyImageMode(mode) {
+    if (mode === 'original') {
+      imageMode = 'original';
+      if (aiOriginal) {
+        S.sourceOriginal = aiOriginal;
+        S.uploadOriginal = aiOriginal;
+        S.whiteBg = detectWhiteBg(aiOriginal);
+        refreshSource();
+      }
+      syncImageModeUI();
+      updateHomeUI();
+      return;
+    }
+    if (aiResultCanvas) {
+      imageMode = 'ai';
+      S.sourceOriginal = aiResultCanvas;
+      S.uploadOriginal = aiResultCanvas;
+      S.whiteBg = detectWhiteBg(aiResultCanvas);
+      refreshSource();
+      syncImageModeUI();
+      updateHomeUI();
+      return;
+    }
+    openAI();
+  }
+
+  function resetAIState() {
+    aiOriginal = null;
+    aiResultCanvas = null;
+    aiCandidate = null;
+    imageMode = 'original';
+    syncImageModeUI();
+  }
+
+  /* ---------- AI 像素化：混元生图 ---------- */
   function aiBases() {
     const stored = (() => { try { return localStorage.getItem('pindou-ai-base') || ''; } catch (e) { return ''; } })();
     return [...new Set([stored, 'http://127.0.0.1:8788', 'http://127.0.0.1:8787']
@@ -659,23 +683,6 @@
     return false;
   }
 
-  function renderAIPresets() {
-    const host = $('#aiPresets');
-    host.innerHTML = '';
-    AI_PRESETS.forEach(p => {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'ai-preset' + (aiPreset === p.id ? ' active' : '');
-      b.dataset.aiPreset = p.id;
-      b.innerHTML = `<b>${p.label}</b><small>${p.desc}</small>`;
-      b.addEventListener('click', () => {
-        aiPreset = p.id;
-        $$('#aiPresets .ai-preset').forEach(x => x.classList.toggle('active', x === b));
-      });
-      host.appendChild(b);
-    });
-  }
-
   function aiSquareSource() {
     const max = 1024;
     const c = document.createElement('canvas');
@@ -683,7 +690,7 @@
     const ctx = c.getContext('2d');
     ctx.fillStyle = '#FFFFFF';
     ctx.fillRect(0, 0, max, max);
-    const src = S.sourceOriginal;
+    const src = aiOriginal || S.sourceOriginal;
     const scale = Math.min(max / src.width, max / src.height);
     const w = Math.round(src.width * scale), h = Math.round(src.height * scale);
     ctx.imageSmoothingEnabled = true;
@@ -696,14 +703,14 @@
     if (!S.sourceOriginal) { toast('先选择一张图片'); return; }
     aiCandidate = null;
     aiBusy = false;
-    $('#aiBefore').src = S.sourceOriginal.toDataURL('image/jpeg', 0.82);
+    const base = aiOriginal || S.sourceOriginal;
+    $('#aiBefore').src = base.toDataURL('image/jpeg', 0.82);
     $('#aiAfter').removeAttribute('src');
     $('#aiResult').classList.add('hidden');
     $('#aiActions').classList.remove('hidden');
     $('#aiProgress').classList.add('hidden');
     $('#aiHint').textContent = '';
-    $('#aiGenerateBtn').textContent = '生成 AI 风格图';
-    renderAIPresets();
+    $('#aiGenerateBtn').textContent = '生成 AI 像素图';
     $('#aiBaseInput').value = aiBase || 'http://127.0.0.1:8788';
     openSheet('sheetAI');
     checkAIService();
@@ -731,7 +738,7 @@
     try {
       const body = {
         image: aiSquareSource(),
-        preset: aiPreset,
+        preset: 'pixel',
         prompt: $('#aiPrompt').value.trim(),
       };
       const res = await fetch(aiBase + '/api/ai/stylize', {
@@ -785,35 +792,30 @@
       c.height = img.naturalHeight || img.height;
       c.getContext('2d').drawImage(img, 0, 0);
       if (!aiOriginal) aiOriginal = S.sourceOriginal;
+      aiResultCanvas = c;
+      imageMode = 'ai';
       S.sourceOriginal = c;
       S.uploadOriginal = c;
       S.whiteBg = detectWhiteBg(c);
       S.projectId = null;
       refreshSource();
+      syncImageModeUI();
       updateHomeUI();
-      $('#aiRestoreBtn').classList.remove('hidden');
       closeSheets();
-      toast('已应用 AI 效果');
+      toast('已应用 AI 像素化');
     } catch (e) {
       toast('AI 图片加载失败，请重试');
     }
   }
 
-  function restoreAI() {
-    if (!aiOriginal) return;
-    S.sourceOriginal = aiOriginal;
-    S.uploadOriginal = aiOriginal;
-    S.whiteBg = detectWhiteBg(aiOriginal);
-    refreshSource();
-    updateHomeUI();
-    $('#aiRestoreBtn').classList.add('hidden');
-    aiOriginal = null;
-    toast('已恢复原图');
-  }
-
   function bindAI() {
-    $('#aiOpenBtn').addEventListener('click', openAI);
-    $('#aiRestoreBtn').addEventListener('click', restoreAI);
+    $$('#imageModeTabs .image-mode').forEach(b => {
+      b.addEventListener('click', () => {
+        const mode = b.dataset.imageMode;
+        if (mode === 'ai' && imageMode === 'ai') { openAI(); return; }
+        applyImageMode(mode);
+      });
+    });
     $('#aiCheckBtn').addEventListener('click', checkAIService);
     $('#aiSetupBtn').addEventListener('click', () => {
       $('#aiSetupBox').classList.toggle('hidden');
@@ -829,7 +831,6 @@
       aiBase = v;
       await checkAIService();
     });
-    renderAIPresets();
   }
 
   /* ---------- 裁切 ---------- */
@@ -901,6 +902,7 @@
     S.sourceOriginal = out;
     S.whiteBg = detectWhiteBg(out);
     S.projectId = null;
+    resetAIState();
     refreshSource();
     $('#uploadThumb').src = out.toDataURL('image/jpeg', 0.85);
     closeSheets();
@@ -1505,16 +1507,6 @@
         <span class="adv-help">照片渐变多时开启，卡通图案建议关闭。</span>
       </div>
       <div class="adv-row">
-        <span class="adv-label">画面风格</span>
-        <select class="select" data-adv="style">
-          <option value="original">原图（推荐）</option>
-          <option value="cartoon">卡通（色块更干净）</option>
-          <option value="pixel">像素（复古颗粒）</option>
-          <option value="silhouette">剪影（单色轮廓）</option>
-        </select>
-        <span class="adv-help">仅对「图片」来源生效；文字与模板保持矢量清晰。</span>
-      </div>
-      <div class="adv-row">
         <span class="adv-label">区域合并（去杂色）</span>
         <div class="adv-slider">
           <input type="range" data-adv-range="merge" min="0" max="80" step="5">
@@ -1563,13 +1555,7 @@
       const adv = e.target.dataset.adv;
       if (adv) {
         S.opts[adv] = e.target.value;
-        if (adv === 'style') {
-          refreshSource();
-          updateHomeUI();
-          regenerate();
-        } else {
-          regenerate();
-        }
+        regenerate();
         saveSettings();
         return;
       }
@@ -2780,9 +2766,7 @@
     S.uploadOriginal = null;
     S.img = null;
     S.imgFull = null;
-    aiOriginal = null;
-    aiCandidate = null;
-    $('#aiRestoreBtn').classList.add('hidden');
+    resetAIState();
     if (p.source) {
       try {
         const img = await imageFromDataUrl(p.source);
@@ -2935,9 +2919,7 @@
       S.imgFull = null;
       S.sourceMode = 'image';
       S.remixOf = null;
-      aiOriginal = null;
-      aiCandidate = null;
-      $('#aiRestoreBtn').classList.add('hidden');
+      resetAIState();
       updateCounts();
       $('#titleInput').value = S.title;
       showView('workspace');

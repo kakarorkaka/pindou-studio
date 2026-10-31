@@ -76,13 +76,9 @@ function requestBuffer(urlString, { method = 'GET', headers = {}, body = null, t
 }
 
 const PRESETS = {
-  cartoon: {
-    label: '日系卡通',
-    prompt: '把参考图中的主体（人物、动物或物品）重绘为干净可爱的日系卡通形象。保留主体的发型、五官、姿势、服装与构图，平涂色块，线条简洁，主体居中。背景替换为纯白色：保持主体完整，边缘干净，无阴影、无地面、无文字、无水印，正方形构图。为拼豆优化：减少渐变与细碎纹理，色块边界清晰，轮廓闭合。',
-  },
   pixel: {
-    label: '复古像素',
-    prompt: '把参考图重绘为精致的复古像素画，32-bit 像素艺术风格。保留主体的识别特征与构图，色块清晰，主体居中。背景替换为纯白色：保持主体完整，边缘干净，无阴影、无地面、无文字、无水印，正方形构图。为拼豆优化：不要渐变、不要细小噪点，轮廓闭合。',
+    label: 'AI 像素化',
+    prompt: '把参考图中的主体（人物、动物或物品）重绘为干净的复古像素画，16-bit 像素艺术风格。保留脸型、发型外轮廓、眼镜、眼睛、鼻子、嘴、表情和姿势，不要把眼睛画小或改变嘴型，不要省略五官。严格像素网格，硬边缘，无抗锯齿、无渐变、无模糊、无噪点。限制在 12–14 个颜色，平涂大色块；头发合并成 4–6 个大色块，不要一根根发丝、不要碎发、不要孤立像素、不要一像素宽线条；皮肤不要细碎高光。主体居中，纯白背景，无阴影、无地面、无文字、无水印，正方形构图。为拼豆优化：轮廓闭合，色块边界清晰，减少细小纹理。',
   },
 };
 
@@ -191,11 +187,11 @@ async function readJson(req) {
 }
 
 function pickPreset(body) {
-  const id = String(body.preset || 'cartoon');
-  const p = PRESETS[id] || PRESETS.cartoon;
+  const id = 'pixel';
+  const p = PRESETS.pixel;
   const extra = String(body.prompt || '').trim().slice(0, 600);
   const prompt = extra ? `${p.prompt}\n补充要求：${extra}` : p.prompt;
-  return { id: PRESETS[id] ? id : 'cartoon', prompt };
+  return { id, prompt };
 }
 
 async function callHunyuan({ image, preset, prompt, key }) {

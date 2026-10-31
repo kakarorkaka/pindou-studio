@@ -120,21 +120,20 @@
         <!-- 图片：效果预览 + 四档尺寸 -->
         <div class="image-preview hidden" id="imagePreview">
           <div class="ip-head">
-            <span class="ip-kicker">原图与风格</span>
+            <span class="ip-kicker">图片处理</span>
             <button class="link-btn" id="ipCropBtn" type="button">裁切</button>
           </div>
           <div class="ip-grid">
             <div class="ip-source">
               <div class="ip-original"><img id="ipOriginal" alt="原图预览"></div>
-              <div class="ip-styles" id="ipStyles"></div>
+              <div class="image-mode-tabs" id="imageModeTabs" role="tablist" aria-label="图片处理方式">
+                <button class="image-mode active" data-image-mode="original" type="button" role="tab" aria-selected="true">原图</button>
+                <button class="image-mode" data-image-mode="ai" type="button" role="tab" aria-selected="false">AI 像素化<em>混元</em></button>
+              </div>
+              <p class="image-mode-note" id="imageModeNote">AI 像素化会自动白底，生成后直接进四档图纸。</p>
               <label class="check-inline ip-blank" title="白底 / 透明背景效果最好">
                 <input type="checkbox" id="ipBlank"> 一键去背景
               </label>
-              <button class="ai-entry" id="aiOpenBtn" type="button">
-                <span class="ai-spark" aria-hidden="true">✦</span>
-                <span class="ai-entry-text"><b>AI 风格化</b><small>混元生图 · 自动白底</small></span>
-              </button>
-              <button class="link-btn ai-restore hidden" id="aiRestoreBtn" type="button">恢复原图</button>
             </div>
             <div class="ip-big">
               <canvas id="ipBig" aria-label="图纸效果预览"></canvas>
@@ -410,7 +409,7 @@
 
 <section class="sheet sheet-wide" id="sheetAI" role="dialog" aria-modal="true" aria-labelledby="aiTitle" hidden>
   <div class="sheet-head">
-    <h2 class="serif" id="aiTitle">AI 风格化</h2>
+    <h2 class="serif" id="aiTitle">AI 像素化</h2>
     <button class="icon-btn" data-close type="button" aria-label="关闭">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 6l12 12M18 6L6 18"/></svg>
     </button>
@@ -421,16 +420,19 @@
       <span class="ai-status-text" id="aiStatusText">检查 AI 服务…</span>
       <button class="link-btn" id="aiCheckBtn" type="button">重试</button>
     </div>
-    <p class="ai-sub">用混元生图把照片变成好拼的风格；两个预设都会自动输出纯白背景，再用现有算法转成四档图纸。</p>
+    <p class="ai-sub">用混元把照片变成干净的像素画，自动纯白背景；生成后直接用四档图纸。</p>
 
-    <div class="ai-presets" id="aiPresets"></div>
+    <div class="ai-single">
+      <b>像素化</b>
+      <span>12–16 色 · 硬边缘 · 自动白底</span>
+    </div>
 
     <label class="field-group">
       <span class="field-label">补充要求（可选）</span>
-      <textarea class="ai-prompt" id="aiPrompt" rows="2" maxlength="200" placeholder="例如：保留眼镜，背景纯白，不要改变姿势"></textarea>
+      <textarea class="ai-prompt" id="aiPrompt" rows="2" maxlength="200" placeholder="例如：保留眼镜，头发简化，不要改变姿势"></textarea>
     </label>
 
-    <p class="sheet-note">生成约 20 秒，每次会消耗一次混元额度；白底已包含在风格里，使用后会自动去背景。图片只发送到你在本机配置的 AI 代理，Key 不会进入网页。</p>
+    <p class="sheet-note">生成约 20 秒，每次会消耗一次混元额度；白底已包含在像素化里，使用后会自动去背景。图片只发送到你在本机配置的 AI 代理，Key 不会进入网页。</p>
 
     <div class="ai-progress hidden" id="aiProgress">
       <span class="spinner" aria-hidden="true"></span>
@@ -440,7 +442,7 @@
     <div class="ai-result hidden" id="aiResult">
       <div class="ai-compare">
         <figure><img id="aiBefore" alt="原图"><figcaption>原图</figcaption></figure>
-        <figure><img id="aiAfter" alt="AI 效果"><figcaption>AI 效果</figcaption></figure>
+        <figure><img id="aiAfter" alt="AI 效果"><figcaption>AI 像素化</figcaption></figure>
       </div>
       <div class="sheet-actions">
         <button class="btn btn-primary btn-block" id="aiUseBtn" type="button">使用这张图</button>
@@ -449,7 +451,7 @@
     </div>
 
     <div class="sheet-actions" id="aiActions">
-      <button class="btn btn-primary btn-block" id="aiGenerateBtn" type="button">生成 AI 风格图</button>
+      <button class="btn btn-primary btn-block" id="aiGenerateBtn" type="button">生成 AI 像素图</button>
       <button class="btn btn-ghost btn-block" id="aiSetupBtn" type="button">如何配置 AI 服务</button>
     </div>
 
