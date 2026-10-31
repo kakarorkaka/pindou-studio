@@ -383,6 +383,9 @@
         S.whiteBg = detectWhiteBg(c);
         S.projectId = null;
         S.title = '';
+        aiOriginal = null;
+        aiCandidate = null;
+        $('#aiRestoreBtn').classList.add('hidden');
         refreshSource();
         S.imgName = file.name.replace(/\.[^.]+$/, '');
         if (!S.title) S.title = S.imgName;
@@ -439,6 +442,22 @@
   const previewData = new Map();
   let cropState = null;
   let cropDrag = null;
+
+  /* ---------- 混元 AI 风格化 ---------- */
+  const AI_PRESETS = [
+    { id: 'cartoon', label: '日系卡通', desc: '平涂色块' },
+    { id: 'pixel', label: '复古像素', desc: '32-bit 像素' },
+    { id: 'figure', label: 'Q 版手办', desc: '黏土质感' },
+    { id: 'sticker', label: '贴纸描边', desc: '粗描边' },
+    { id: 'cutout', label: '白底抠图', desc: '只换背景' },
+  ];
+  let aiBase = '';
+  let aiPreset = 'cartoon';
+  let aiCandidate = null;
+  let aiOriginal = null;
+  let aiBusy = false;
+  let aiTimer = null;
+  let aiReady = false;
 
   function drawPatternCanvas(canvas, grid, palette, maxPx) {
     if (!canvas || !grid || !grid.length) return;
@@ -590,6 +609,230 @@
       saveSettings();
     }
     schedulePreview();
+  }
+
+
+  /* ---------- AI 风格化：混元生图 ---------- */
+  function aiBases() {
+    const stored = (() => { try { return localStorage.getItem('pindou-ai-base') || ''; } catch (e) { return ''; } })();
+    return [...new Set([stored, 'http://127.0.0.1:8788', 'http://127.0.0.1:8787']
+      .filter(Boolean).map(s => s.replace(/\/+$/, '')))];
+  }
+
+  function aiSetStatus(kind, text) {
+    const dot = $('#aiDot');
+    if (dot) dot.className = 'ai-dot ' + kind;
+    const t = $('#aiStatusText');
+    if (t) t.textContent = text;
+  }
+
+  function aiShowSetup(show) {
+    $('#aiSetupBox').classList.toggle('hidden', !show);
+    $('#aiGenerateBtn').disabled = !aiReady;
+  }
+
+  async function checkAIService() {
+    aiReady = false;
+    aiSetStatus('', '检查 AI 服务…');
+    $('#aiGenerateBtn').disabled = true;
+    for (const base of aiBases()) {
+      try {
+        const res = await fetch(base + '/health', { signal: AbortSignal.timeout(2600) });
+        if (!res.ok) continue;
+        const h = await res.json();
+        aiBase = base;
+        try { localStorage.setItem('pindou-ai-base', base); } catch (e) { /* ignore */ }
+        $('#aiBaseInput').value = base;
+        if (!h.configured) {
+          aiSetStatus('warn', '代理已连接，但未找到混元 Key');
+          $('#aiHint').textContent = '在 KOK 生图设置中填入 Key，或设置 HUNYUAN_API_KEY 后重启代理。';
+          aiShowSetup(true);
+          return false;
+        }
+        aiReady = true;
+        aiSetStatus(h.mock ? 'ok' : 'ok', h.mock ? '已连接 · 联调模式（不调用混元）' : '已连接 · 混元 v3.5');
+        $('#aiHint').textContent = h.mock ? '当前是 Mock 模式，返回原图，仅用于联调。' : '生成约 20 秒，每次会消耗一次混元额度。';
+        aiShowSetup(false);
+        return true;
+      } catch (e) { /* try next base */ }
+    }
+    aiSetStatus('bad', '未连接 · 请启动本地 AI 服务');
+    $('#aiHint').textContent = '运行 node tools/hunyuan-proxy.mjs 后点「重试」。';
+    aiShowSetup(true);
+    return false;
+  }
+
+  function renderAIPresets() {
+    const host = $('#aiPresets');
+    host.innerHTML = '';
+    AI_PRESETS.forEach(p => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'ai-preset' + (aiPreset === p.id ? ' active' : '');
+      b.dataset.aiPreset = p.id;
+      b.innerHTML = `<b>${p.label}</b><small>${p.desc}</small>`;
+      b.addEventListener('click', () => {
+        aiPreset = p.id;
+        $$('#aiPresets .ai-preset').forEach(x => x.classList.toggle('active', x === b));
+      });
+      host.appendChild(b);
+    });
+  }
+
+  function aiSquareSource() {
+    const max = 1024;
+    const c = document.createElement('canvas');
+    c.width = max; c.height = max;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, max, max);
+    const src = S.sourceOriginal;
+    const scale = Math.min(max / src.width, max / src.height);
+    const w = Math.round(src.width * scale), h = Math.round(src.height * scale);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(src, (max - w) / 2, (max - h) / 2, w, h);
+    return c.toDataURL('image/jpeg', 0.9);
+  }
+
+  async function openAI() {
+    if (!S.sourceOriginal) { toast('先选择一张图片'); return; }
+    aiCandidate = null;
+    aiBusy = false;
+    $('#aiBefore').src = S.sourceOriginal.toDataURL('image/jpeg', 0.82);
+    $('#aiAfter').removeAttribute('src');
+    $('#aiResult').classList.add('hidden');
+    $('#aiActions').classList.remove('hidden');
+    $('#aiProgress').classList.add('hidden');
+    $('#aiHint').textContent = '';
+    $('#aiGenerateBtn').textContent = '生成 AI 风格图';
+    renderAIPresets();
+    $('#aiBaseInput').value = aiBase || 'http://127.0.0.1:8788';
+    openSheet('sheetAI');
+    checkAIService();
+  }
+
+  async function generateAI() {
+    if (aiBusy) return;
+    if (!aiReady) {
+      await checkAIService();
+      if (!aiReady) return;
+    }
+    aiBusy = true;
+    $('#aiGenerateBtn').disabled = true;
+    $('#aiActions').classList.add('hidden');
+    $('#aiResult').classList.add('hidden');
+    $('#aiProgress').classList.remove('hidden');
+    const started = Date.now();
+    const tick = () => {
+      $('#aiProgressText').textContent = `正在生成… ${Math.max(1, Math.round((Date.now() - started) / 1000))}s`;
+    };
+    tick();
+    aiTimer = setInterval(tick, 1000);
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 200000);
+    try {
+      const body = {
+        image: aiSquareSource(),
+        preset: aiPreset,
+        prompt: $('#aiPrompt').value.trim(),
+      };
+      const res = await fetch(aiBase + '/api/ai/stylize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const err = new Error(data.message || 'AI 生成失败');
+        err.code = data.error;
+        err.status = res.status;
+        throw err;
+      }
+      if (!data.image || !/^data:image\//.test(data.image)) throw new Error('AI 返回的图片格式不正确');
+      aiCandidate = data.image;
+      $('#aiAfter').src = data.image;
+      $('#aiResult').classList.remove('hidden');
+      $('#aiActions').classList.add('hidden');
+      $('#aiHint').textContent = data.mock ? 'Mock 模式返回原图；配置 Key 后会调用混元。' : '生成完成，可对比后使用；使用后会重新计算四档图纸。';
+      aiSetStatus('ok', data.mock ? '已连接 · 联调模式（不调用混元）' : '已连接 · 混元 v3.5');
+    } catch (e) {
+      $('#aiProgress').classList.add('hidden');
+      $('#aiActions').classList.remove('hidden');
+      const msg = e.name === 'AbortError' ? '生成超时（200 秒），请重试' : (e.message || '生成失败');
+      if (e.code === 'NO_KEY' || e.status === 503) {
+        aiSetStatus('warn', '未找到混元 Key');
+        aiShowSetup(true);
+      } else if (e.status === 401) {
+        aiSetStatus('bad', '混元 Key 无效或已过期');
+      } else {
+        aiSetStatus('bad', '生成失败 · 检查代理/网络');
+      }
+      $('#aiHint').textContent = msg;
+    } finally {
+      clearInterval(aiTimer);
+      clearTimeout(to);
+      aiBusy = false;
+      $('#aiGenerateBtn').disabled = !aiReady;
+      $('#aiProgress').classList.add('hidden');
+    }
+  }
+
+  async function useAI() {
+    if (!aiCandidate) return;
+    try {
+      const img = await imageFromDataUrl(aiCandidate);
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth || img.width;
+      c.height = img.naturalHeight || img.height;
+      c.getContext('2d').drawImage(img, 0, 0);
+      if (!aiOriginal) aiOriginal = S.sourceOriginal;
+      S.sourceOriginal = c;
+      S.uploadOriginal = c;
+      S.whiteBg = detectWhiteBg(c);
+      S.projectId = null;
+      refreshSource();
+      updateHomeUI();
+      $('#aiRestoreBtn').classList.remove('hidden');
+      closeSheets();
+      toast('已应用 AI 效果');
+    } catch (e) {
+      toast('AI 图片加载失败，请重试');
+    }
+  }
+
+  function restoreAI() {
+    if (!aiOriginal) return;
+    S.sourceOriginal = aiOriginal;
+    S.uploadOriginal = aiOriginal;
+    S.whiteBg = detectWhiteBg(aiOriginal);
+    refreshSource();
+    updateHomeUI();
+    $('#aiRestoreBtn').classList.add('hidden');
+    aiOriginal = null;
+    toast('已恢复原图');
+  }
+
+  function bindAI() {
+    $('#aiOpenBtn').addEventListener('click', openAI);
+    $('#aiRestoreBtn').addEventListener('click', restoreAI);
+    $('#aiCheckBtn').addEventListener('click', checkAIService);
+    $('#aiSetupBtn').addEventListener('click', () => {
+      $('#aiSetupBox').classList.toggle('hidden');
+      $('#aiSetupBox').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+    $('#aiGenerateBtn').addEventListener('click', generateAI);
+    $('#aiRegenBtn').addEventListener('click', generateAI);
+    $('#aiUseBtn').addEventListener('click', useAI);
+    $('#aiSaveBase').addEventListener('click', async () => {
+      const v = $('#aiBaseInput').value.trim().replace(/\/+$/, '');
+      if (!/^https?:\/\//.test(v)) { toast('请填写 http(s) 地址'); return; }
+      try { localStorage.setItem('pindou-ai-base', v); } catch (e) { /* ignore */ }
+      aiBase = v;
+      await checkAIService();
+    });
+    renderAIPresets();
   }
 
   /* ---------- 裁切 ---------- */
@@ -2540,6 +2783,9 @@
     S.uploadOriginal = null;
     S.img = null;
     S.imgFull = null;
+    aiOriginal = null;
+    aiCandidate = null;
+    $('#aiRestoreBtn').classList.add('hidden');
     if (p.source) {
       try {
         const img = await imageFromDataUrl(p.source);
@@ -2692,6 +2938,9 @@
       S.imgFull = null;
       S.sourceMode = 'image';
       S.remixOf = null;
+      aiOriginal = null;
+      aiCandidate = null;
+      $('#aiRestoreBtn').classList.add('hidden');
       updateCounts();
       $('#titleInput').value = S.title;
       showView('workspace');
@@ -3034,6 +3283,7 @@
     bindNewUI();
     bindGallery();
     bindCrop();
+    bindAI();
     ['settingsDesktop', 'settingsMobile'].forEach(id => {
       const host = document.getElementById(id);
       host.addEventListener('click', onSettingsClick);

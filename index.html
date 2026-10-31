@@ -130,6 +130,11 @@
               <label class="check-inline ip-blank" title="白底 / 透明背景效果最好">
                 <input type="checkbox" id="ipBlank"> 一键去背景
               </label>
+              <button class="ai-entry" id="aiOpenBtn" type="button">
+                <span class="ai-spark" aria-hidden="true">✦</span>
+                <span class="ai-entry-text"><b>AI 风格化</b><small>混元生图 · 白底抠图</small></span>
+              </button>
+              <button class="link-btn ai-restore hidden" id="aiRestoreBtn" type="button">恢复原图</button>
             </div>
             <div class="ip-big">
               <canvas id="ipBig" aria-label="图纸效果预览"></canvas>
@@ -400,6 +405,70 @@
       <button class="btn btn-ghost btn-block" id="nativeShare" type="button">系统分享</button>
     </div>
     <p class="sheet-tip" id="shareHint">别人打开链接，就能看到同一张图纸。</p>
+  </div>
+</section>
+
+<section class="sheet sheet-wide" id="sheetAI" role="dialog" aria-modal="true" aria-labelledby="aiTitle" hidden>
+  <div class="sheet-head">
+    <h2 class="serif" id="aiTitle">AI 风格化</h2>
+    <button class="icon-btn" data-close type="button" aria-label="关闭">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="sheet-body">
+    <div class="ai-status">
+      <span class="ai-dot" id="aiDot"></span>
+      <span class="ai-status-text" id="aiStatusText">检查 AI 服务…</span>
+      <button class="link-btn" id="aiCheckBtn" type="button">重试</button>
+    </div>
+    <p class="ai-sub">用混元生图把照片变成好拼的风格，再用现有算法转成四档图纸。</p>
+
+    <div class="ai-presets" id="aiPresets"></div>
+
+    <label class="field-group">
+      <span class="field-label">补充要求（可选）</span>
+      <textarea class="ai-prompt" id="aiPrompt" rows="2" maxlength="200" placeholder="例如：保留眼镜，背景纯白，不要改变姿势"></textarea>
+    </label>
+
+    <p class="sheet-note">生成约 20 秒，每次会消耗一次混元额度；图片只发送到你在本机配置的 AI 代理，Key 不会进入网页。</p>
+
+    <div class="ai-progress hidden" id="aiProgress">
+      <span class="spinner" aria-hidden="true"></span>
+      <span id="aiProgressText">正在生成…</span>
+    </div>
+
+    <div class="ai-result hidden" id="aiResult">
+      <div class="ai-compare">
+        <figure><img id="aiBefore" alt="原图"><figcaption>原图</figcaption></figure>
+        <figure><img id="aiAfter" alt="AI 效果"><figcaption>AI 效果</figcaption></figure>
+      </div>
+      <div class="sheet-actions">
+        <button class="btn btn-primary btn-block" id="aiUseBtn" type="button">使用这张图</button>
+        <button class="btn btn-ghost btn-block" id="aiRegenBtn" type="button">重新生成</button>
+      </div>
+    </div>
+
+    <div class="sheet-actions" id="aiActions">
+      <button class="btn btn-primary btn-block" id="aiGenerateBtn" type="button">生成 AI 风格图</button>
+      <button class="btn btn-ghost btn-block" id="aiSetupBtn" type="button">如何配置 AI 服务</button>
+    </div>
+
+    <div class="ai-setup hidden" id="aiSetupBox">
+      <p><b>1. 启动本地代理</b></p>
+      <pre><code>cd site
+node tools/hunyuan-proxy.mjs</code></pre>
+      <p><b>2. 提供混元 Key</b>（任选一个，Key 不要发到网页）</p>
+      <pre><code>HUNYUAN_API_KEY=sk-... node tools/hunyuan-proxy.mjs</code></pre>
+      <p>代理也会自动读取 KOK 的 <code>image_gen_api_key</code>。详见 <code>tools/README.md</code>。</p>
+      <p><b>3. 服务地址</b></p>
+      <div class="ai-base-row">
+        <input class="ai-base-input" id="aiBaseInput" type="text" placeholder="http://127.0.0.1:8788">
+        <button class="btn btn-ghost btn-sm" id="aiSaveBase" type="button">保存并检查</button>
+      </div>
+      <p class="ai-setup-tip">线上页面也可以连本机代理；如果部署了 Cloudflare Worker，把地址填这里。</p>
+    </div>
+
+    <p class="sheet-tip" id="aiHint"></p>
   </div>
 </section>
 
