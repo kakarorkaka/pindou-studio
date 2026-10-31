@@ -132,7 +132,9 @@ HUNYUAN_API_KEY=sk-... node tools/hunyuan-proxy.mjs
 
 代理只监听 `127.0.0.1:8788`，会自动读取 KOK 的 `image_gen_api_key`、环境变量或 `site/.env.local`。页面里上传图片 → 点「AI 风格化」→ 选预设 → 生成 → 使用这张图，随后仍走四档图纸预览。
 
-详细说明见 [tools/README.md](tools/README.md)。没有启动代理时，AI 入口会提示配置，不影响现有的本地风格与图纸转换。
+![AI 风格化](docs/screenshots/ai-sheet-real.png)
+
+实测：混元 v3.5，1024×1024 白底图，约 11.6 秒返回；「白底抠图」会保留主体、替换背景，再走本地去背景与四档图纸。详细说明见 [tools/README.md](tools/README.md)。没有启动代理时，AI 入口会提示配置，不影响现有的本地风格与图纸转换。
 
 ## 浏览器支持
 

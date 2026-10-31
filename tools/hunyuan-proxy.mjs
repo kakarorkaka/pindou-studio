@@ -20,6 +20,7 @@
  *   5. 项目根目录 .env.local 的 HUNYUAN_API_KEY=...
  */
 import http from 'node:http';
+import https from 'node:https';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -38,14 +39,50 @@ const MOCK = process.env.HUNYUAN_MOCK === '1';
 const MOCK_DELAY = Number(process.env.MOCK_DELAY_MS || 900);
 const MAX_BODY = 16 * 1024 * 1024;
 
+const CA_BUNDLE = (() => {
+  for (const f of ['/etc/ssl/cert.pem', '/private/etc/ssl/cert.pem']) {
+    try { if (fs.existsSync(f)) return fs.readFileSync(f); } catch { /* ignore */ }
+  }
+  return undefined;
+})();
+
+/**
+ * 用 node:https 而不是 fetch：
+ * 本机 Node 的 fetch/undici 不读系统钥匙串；curl 正常但 fetch 会报
+ * UNABLE_TO_GET_ISSUER_CERT_LOCALLY。显式加载系统 CA 可以稳定工作。
+ */
+function requestBuffer(urlString, { method = 'GET', headers = {}, body = null, timeout = 180_000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(urlString);
+    const lib = u.protocol === 'http:' ? http : https;
+    const req = lib.request(u, {
+      method,
+      headers,
+      ...(u.protocol === 'https:' && CA_BUNDLE ? { ca: CA_BUNDLE } : {}),
+    }, res => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => resolve({
+        status: res.statusCode || 0,
+        headers: res.headers,
+        body: Buffer.concat(chunks),
+      }));
+    });
+    req.setTimeout(timeout, () => req.destroy(new Error('REQUEST_TIMEOUT')));
+    req.on('error', reject);
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
 const PRESETS = {
   cartoon: {
     label: '日系卡通',
-    prompt: '把参考图重绘为干净可爱的日系卡通头像。保留人物的发型、五官、姿势、服装和构图，平涂色块，线条简洁，纯白背景，无阴影，无文字，无水印，正方形构图。',
+    prompt: '把参考图中的主体重绘为干净可爱的日系卡通形象（人物或动物）。保留主体的发型、五官、姿势、服装和构图，平涂色块，线条简洁，主体居中，纯白背景，无阴影，无文字，无水印，正方形构图。',
   },
   pixel: {
     label: '复古像素',
-    prompt: '把参考图重绘为精致的复古像素画，32-bit 像素艺术风格。保留人物/主体的识别特征与构图，色块清晰，纯白背景，无文字，无水印，正方形构图。',
+    prompt: '把参考图重绘为精致的复古像素画，32-bit 像素艺术风格。保留人物/主体的识别特征与构图，色块清晰，主体居中，纯白背景，无文字，无水印，正方形构图。',
   },
   figure: {
     label: 'Q 版手办',
@@ -187,26 +224,31 @@ async function callHunyuan({ image, preset, prompt, key }) {
     }],
   };
   const started = Date.now();
-  const resp = await fetch(ENDPOINT, {
+  const payload = JSON.stringify(body);
+  const resp = await requestBuffer(ENDPOINT, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(180_000),
+    headers: {
+      Authorization: `Bearer ${key}`,
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(payload),
+    },
+    body: payload,
+    timeout: 180_000,
   });
-  const text = await resp.text();
+  const text = resp.body.toString('utf8');
   let data = null;
   try { data = JSON.parse(text); } catch { /* ignore */ }
-  if (!resp.ok) {
+  if (resp.status !== 200) {
     const msg = data?.error?.message_zh || data?.error?.message || text.slice(0, 300);
     throw Object.assign(new Error(msg || `HUNYUAN_HTTP_${resp.status}`), { status: resp.status });
   }
   const url = data?.choices?.[0]?.delta?.image?.url;
   if (!url) throw Object.assign(new Error('HUNYUAN_EMPTY_IMAGE'), { status: 502 });
-  const imgResp = await fetch(url, { signal: AbortSignal.timeout(90_000) });
-  if (!imgResp.ok) throw Object.assign(new Error(`IMAGE_DOWNLOAD_${imgResp.status}`), { status: 502 });
-  const buf = Buffer.from(await imgResp.arrayBuffer());
+  const imgResp = await requestBuffer(url, { timeout: 90_000 });
+  if (imgResp.status !== 200) throw Object.assign(new Error(`IMAGE_DOWNLOAD_${imgResp.status}`), { status: 502 });
+  const buf = imgResp.body;
   if (!buf.length) throw Object.assign(new Error('IMAGE_EMPTY'), { status: 502 });
-  const ct = (imgResp.headers.get('content-type') || 'image/png').split(';')[0];
+  const ct = (imgResp.headers['content-type'] || 'image/png').split(';')[0];
   return {
     image: `data:${ct};base64,${buf.toString('base64')}`,
     model: MODEL,
