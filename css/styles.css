@@ -1126,7 +1126,7 @@ input[type="text"]:focus {
 .ai-dot.bad { background: var(--accent); }
 .ai-status-text { flex: 1; min-width: 0; }
 .ai-sub { margin: 9px 0 0; font-size: 11.5px; color: var(--ink-3); line-height: 1.6; }
-.ai-presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0; }
+.ai-presets { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 12px 0; }
 .ai-preset {
   border: 1px solid var(--hairline);
   border-radius: 10px;

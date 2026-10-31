@@ -445,9 +445,8 @@
 
   /* ---------- 混元 AI 风格化 ---------- */
   const AI_PRESETS = [
-    { id: 'cartoon', label: '日系卡通', desc: '平涂色块' },
-    { id: 'pixel', label: '复古像素', desc: '32-bit 像素' },
-    { id: 'cutout', label: '白底抠图', desc: '只换背景' },
+    { id: 'cartoon', label: '日系卡通', desc: '白底 + 平涂' },
+    { id: 'pixel', label: '复古像素', desc: '白底 + 32-bit' },
   ];
   let aiBase = '';
   let aiPreset = 'cartoon';
