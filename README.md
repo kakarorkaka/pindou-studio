@@ -129,7 +129,7 @@ node tools/hunyuan-proxy.mjs
 HUNYUAN_API_KEY=sk-... node tools/hunyuan-proxy.mjs
 ```
 
-代理只监听 `127.0.0.1:8788`，会自动读取 KOK 的 `image_gen_api_key`、环境变量或 `site/.env.local`。页面里上传图片 → 点「AI 像素化」→ 生成 → 使用这张图。混元负责精致扁平插画，本地再压成 96×96 / 32 色的真像素网格，随后走四档图纸预览。
+代理只监听 `127.0.0.1:8788`，会自动读取 KOK 的 `image_gen_api_key`、环境变量或 `site/.env.local`。页面里上传图片 → 点「AI 像素化」→ 生成 → 使用这张图。混元直接生成精致像素画（参考 72×72 网格、24–32 色、禁抖动/禁 3D 珠子），随后走品牌色号量化与四档图纸预览。
 
 ![AI 像素化](docs/screenshots/ai-sheet-real.png)
 

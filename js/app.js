@@ -716,38 +716,6 @@
     checkAIService();
   }
 
-  function pixelizeAICanvas(img) {
-    const cols = 96;
-    const opts = {
-      cols,
-      brand: S.opts.brand,
-      maxColors: 32,
-      sampling: 'avg',
-      match: 'lab',
-      dither: 'off',
-      merge: 0,
-      blank: true,
-      boundary: false,
-      whiteTh: 240,
-      edgeClean: true,
-    };
-    const res = E.generate(img, opts);
-    if (!res.palette.length) return null;
-    const out = document.createElement('canvas');
-    out.width = res.cols;
-    out.height = res.rows;
-    const ctx = out.getContext('2d');
-    for (let y = 0; y < res.rows; y++) {
-      for (let x = 0; x < res.cols; x++) {
-        const v = res.grid[y][x];
-        if (v < 0) continue;
-        ctx.fillStyle = res.palette[v].hex;
-        ctx.fillRect(x, y, 1, 1);
-      }
-    }
-    return out;
-  }
-
   async function generateAI() {
     if (aiBusy) return;
     if (!aiReady) {
@@ -787,14 +755,8 @@
         throw err;
       }
       if (!data.image || !/^data:image\//.test(data.image)) throw new Error('AI 返回的图片格式不正确');
-      let after = data.image;
-      try {
-        const raw = await imageFromDataUrl(data.image);
-        const pixel = pixelizeAICanvas(raw);
-        if (pixel) after = pixel.toDataURL('image/png');
-      } catch (e) { /* fall back to raw */ }
-      aiCandidate = after;
-      $('#aiAfter').src = after;
+      aiCandidate = data.image;
+      $('#aiAfter').src = data.image;
       $('#aiResult').classList.remove('hidden');
       $('#aiActions').classList.add('hidden');
       $('#aiHint').textContent = data.mock ? 'Mock 模式返回原图；配置 Key 后会调用混元。' : '生成完成，可对比后使用；建议选 64 格、24–32 色查看精致效果。';
