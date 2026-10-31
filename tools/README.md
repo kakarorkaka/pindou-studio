@@ -5,7 +5,7 @@
 ## 启动
 
 ```bash
-cd site
+# 在项目根目录（index.html 所在目录）
 node tools/hunyuan-proxy.mjs
 ```
 

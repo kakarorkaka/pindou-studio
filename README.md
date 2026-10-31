@@ -124,7 +124,7 @@ python3 -m http.server 8000
 AI 是可选能力，默认不启用，也不会把 Key 放进网页。它通过本地代理调用腾讯混元：
 
 ```bash
-cd site
+# 在项目根目录
 node tools/hunyuan-proxy.mjs
 # 如果 KOK 中还没有填入生图 Key：
 HUNYUAN_API_KEY=sk-... node tools/hunyuan-proxy.mjs
