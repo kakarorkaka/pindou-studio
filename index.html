@@ -420,11 +420,11 @@
       <span class="ai-status-text" id="aiStatusText">检查 AI 服务…</span>
       <button class="link-btn" id="aiCheckBtn" type="button">重试</button>
     </div>
-    <p class="ai-sub">用混元把照片变成干净的像素画，自动纯白背景；生成后直接用四档图纸。</p>
+    <p class="ai-sub">用混元生成精致扁平插画，再在本地压成 96×96、32 色的真像素网格；自动纯白背景，直接用四档图纸。</p>
 
     <div class="ai-single">
       <b>像素化</b>
-      <span>12–14 色 · 硬边缘 · 自动白底</span>
+      <span>扁平插画 → 96×96 · 32 色</span>
     </div>
 
     <label class="field-group">
@@ -432,7 +432,7 @@
       <textarea class="ai-prompt" id="aiPrompt" rows="2" maxlength="200" placeholder="例如：保留眼镜，头发简化，不要改变姿势"></textarea>
     </label>
 
-    <p class="sheet-note">生成约 20 秒，每次会消耗一次混元额度；白底已包含在像素化里，使用后会自动去背景。图片只发送到你在本机配置的 AI 代理，Key 不会进入网页。</p>
+    <p class="sheet-note">生成约 20 秒，每次会消耗一次混元额度；白底已包含在插画里，本地像素化后自动去背景。图片只发送到你在本机配置的 AI 代理，Key 不会进入网页。</p>
 
     <div class="ai-progress hidden" id="aiProgress">
       <span class="spinner" aria-hidden="true"></span>
