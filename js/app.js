@@ -32,7 +32,7 @@
 
   const S = {
     img: null, imgFull: null, imgName: '', imgW: 0, imgH: 0,
-    sourceOriginal: null, sourceMode: 'image', whiteBg: false,
+    sourceOriginal: null, uploadOriginal: null, sourceMode: 'image', whiteBg: false,
     remixOf: null, gallerySort: 'featured', galleryCat: 'all', galleryQuery: '', mode: 'image',
     text: '', textColor: '#2F2B2F', textOutline: true, templateId: null,
     projectId: null,
@@ -378,6 +378,7 @@
         ctx.drawImage(img, 0, 0, w, h);
 
         S.sourceOriginal = c;
+        S.uploadOriginal = c;
         S.sourceMode = 'image';
         S.whiteBg = detectWhiteBg(c);
         S.projectId = null;
@@ -423,6 +424,288 @@
   /* ------------------------------------------------------------------ */
   /* 首页：校准                                                           */
   /* ------------------------------------------------------------------ */
+
+  /* ------------------------------------------------------------------ */
+  /* 图片效果预览：四档尺寸 / 风格 / 去背景 / 裁切                         */
+  /* ------------------------------------------------------------------ */
+  const PREVIEW_SIZES = [
+    { size: 24, label: '速成', hint: '小挂件' },
+    { size: 40, label: '标准', hint: '推荐' },
+    { size: 64, label: '精细', hint: '摆件' },
+    { size: 96, label: '大幅', hint: '海报级' },
+  ];
+  let previewTimer = null;
+  let previewToken = 0;
+  const previewData = new Map();
+  let cropState = null;
+  let cropDrag = null;
+
+  function drawPatternCanvas(canvas, grid, palette, maxPx) {
+    if (!canvas || !grid || !grid.length) return;
+    const cols = grid[0].length, rows = grid.length;
+    const cell = Math.max(1, Math.floor(maxPx / Math.max(cols, rows)));
+    canvas.width = cols * cell;
+    canvas.height = rows * cell;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#F6F4EF';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        const v = grid[y][x];
+        if (v < 0) continue;
+        ctx.fillStyle = palette[v].hex;
+        ctx.fillRect(x * cell, y * cell, cell, cell);
+      }
+    }
+  }
+
+  function renderStyleChips() {
+    const host = $('#ipStyles');
+    if (!host) return;
+    host.innerHTML = '';
+    const defs = [['original', '原图'], ['cartoon', '卡通'], ['pixel', '像素'], ['silhouette', '剪影']];
+    defs.forEach(([style, label]) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.dataset.style = style;
+      b.className = 'style-chip' + (S.opts.style === style ? ' active' : '');
+      b.textContent = label;
+      b.addEventListener('click', () => {
+        if (S.opts.style === style) return;
+        S.opts.style = style;
+        saveSettings();
+        refreshSource();
+        updateHomeUI();
+      });
+      host.appendChild(b);
+    });
+  }
+
+  function schedulePreview() {
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(buildPreviewData, 140);
+  }
+
+  async function buildPreviewData() {
+    if (!S.img || S.mode !== 'image' || S.sourceMode !== 'image') return;
+    if ($('#calibrate').classList.contains('hidden')) return;
+    const token = ++previewToken;
+    const host = $('#ipSizes');
+    host.innerHTML = PREVIEW_SIZES.map(p => `
+      <div class="ip-size loading">
+        <div class="ip-skeleton"></div>
+        <b>${p.label}</b><span>${p.size} 格 · ${p.hint}</span><em>生成中…</em>
+      </div>`).join('');
+    $('#ipBigMeta').textContent = '正在生成预览…';
+    previewData.clear();
+    try {
+      for (const p of PREVIEW_SIZES) {
+        await new Promise(r => setTimeout(r, 16));
+        if (token !== previewToken) return;
+        const opts = { ...S.opts, cols: p.size };
+        opts.edgeClean = S.whiteBg && S.opts.blank;
+        opts.flat = false;
+        const res = E.generate(S.img, opts);
+        previewData.set(p.size, res);
+      }
+      if (token !== previewToken) return;
+      renderSizeCards();
+      updatePreviewSelection();
+    } catch (e) {
+      if (token === previewToken) {
+        $('#ipBigMeta').textContent = '预览生成失败，换张图片试试';
+      }
+    }
+  }
+
+  function renderSizeCards() {
+    const host = $('#ipSizes');
+    host.innerHTML = '';
+    PREVIEW_SIZES.forEach(p => {
+      const d = previewData.get(p.size);
+      if (!d) return;
+      const used = d.palette.filter(x => x.count > 0).length;
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'ip-size' + (S.cols === p.size ? ' active' : '');
+      b.dataset.size = p.size;
+      const c = document.createElement('canvas');
+      drawPatternCanvas(c, d.grid, d.palette, 150);
+      b.appendChild(c);
+      const tail = document.createElement('span');
+      tail.innerHTML = `<b>${p.label}</b><span>${p.size} 格 · ${p.hint}</span><em>≈ ${fmtNum(d.total)} 颗 · ${used} 色</em>`;
+      b.appendChild(tail);
+      b.addEventListener('click', () => selectPreviewSize(p.size));
+      host.appendChild(b);
+    });
+  }
+
+  function selectPreviewSize(size) {
+    S.cols = size;
+    S.opts.cols = size;
+    saveSettings();
+    $$('.ip-size').forEach(b => b.classList.toggle('active', +b.dataset.size === size));
+    updatePreviewSelection();
+  }
+
+  function updatePreviewSelection() {
+    const d = previewData.get(S.cols);
+    if (!d) return;
+    const used = d.palette.filter(x => x.count > 0).length;
+    drawPatternCanvas($('#ipBig'), d.grid, d.palette, 360);
+    $('#ipBigMeta').textContent = `${d.cols} × ${d.rows} · ${fmtNum(d.total)} 颗 · ${used} 色 · ${S.opts.brand}`;
+    $('#homeEstimate').textContent =
+      `将生成 ${d.cols} × ${d.rows} 格 · 约 ${fmtNum(d.total)} 颗 · ${used} 色`
+      + ` · 约 ${fmtCm(d.cols)} × ${fmtCm(d.rows)} cm · ${fmtTime(d.total)}`;
+    $('#generateLabel').textContent = `使用 ${S.cols} 格生成`;
+    const pal = d.palette.filter(x => x.count > 0).sort((a, b) => b.count - a.count);
+    const host = $('#ipPalette');
+    if (host) {
+      host.innerHTML = pal.slice(0, 8).map(p =>
+        `<span class="ip-pal"><i style="background:${p.hex}"></i>${p.code} · ${fmtNum(p.count)}</span>`).join('')
+        + (pal.length > 8 ? `<span class="ip-pal">+${pal.length - 8} 色</span>` : '');
+    }
+  }
+
+  function refreshPreviewUI(force) {
+    const wrap = $('#imagePreview');
+    const show = S.mode === 'image' && S.sourceMode === 'image' && !!S.sourceOriginal && !!S.img;
+    if (wrap) wrap.classList.toggle('hidden', !show);
+    const sizeField = $('#sizeField');
+    if (sizeField) sizeField.classList.toggle('hidden', show);
+    if (!show) return;
+    if ($('#calibrate').classList.contains('hidden')) return;
+    $('#calibrateTitle').textContent = '效果预览';
+    $('#calibrateNote').textContent = '先看效果，再选尺寸';
+    if (force || S._previewSrc !== S.sourceOriginal) {
+      S._previewSrc = S.sourceOriginal;
+      $('#ipOriginal').src = S.sourceOriginal.toDataURL('image/jpeg', 0.82);
+      renderStyleChips();
+    }
+    $$('#ipStyles .style-chip').forEach(b => b.classList.toggle('active', b.dataset.style === S.opts.style));
+    $('#ipBlank').checked = !!S.opts.blank;
+    if (!PREVIEW_SIZES.some(p => p.size === S.cols)) {
+      S.cols = 40;
+      S.opts.cols = 40;
+      saveSettings();
+    }
+    schedulePreview();
+  }
+
+  /* ---------- 裁切 ---------- */
+  function openCrop() {
+    const base = S.uploadOriginal || S.sourceOriginal;
+    if (!base) { toast('先选择一张图片'); return; }
+    const el = $('#cropImage');
+    el.onload = () => {
+      cropState = {
+        img: el, ratio: '1', zoom: 1, ox: 0, oy: 0,
+        W: el.naturalWidth, H: el.naturalHeight, Fw: 0, Fh: 0,
+      };
+      $$('#cropRatios .g-filter').forEach(b => b.classList.toggle('active', b.dataset.ratio === '1'));
+      $('#cropZoom').value = '1';
+      openSheet('sheetCrop');
+      setTimeout(layoutCrop, 280);
+    };
+    el.src = base.toDataURL('image/jpeg', 0.92);
+  }
+
+  function layoutCrop() {
+    if (!cropState) return;
+    const stage = $('#cropStage');
+    const aspect = cropState.ratio === 'original' ? cropState.W / cropState.H : +cropState.ratio;
+    stage.style.aspectRatio = String(aspect);
+    cropState.ox = 0;
+    cropState.oy = 0;
+    requestAnimationFrame(() => {
+      cropState.Fw = stage.clientWidth;
+      cropState.Fh = stage.clientHeight;
+      renderCrop();
+    });
+  }
+
+  function renderCrop() {
+    if (!cropState) return;
+    const { img, W, H, Fw, Fh, zoom } = cropState;
+    if (!Fw || !Fh) return;
+    const base = Math.max(Fw / W, Fh / H);
+    const scale = base * zoom;
+    const iw = W * scale, ih = H * scale;
+    const maxX = Math.max(0, (iw - Fw) / 2);
+    const maxY = Math.max(0, (ih - Fh) / 2);
+    cropState.ox = clamp(cropState.ox, -maxX, maxX);
+    cropState.oy = clamp(cropState.oy, -maxY, maxY);
+    img.style.width = iw + 'px';
+    img.style.height = ih + 'px';
+    img.style.left = ((Fw - iw) / 2 + cropState.ox) + 'px';
+    img.style.top = ((Fh - ih) / 2 + cropState.oy) + 'px';
+    if ($('#cropZoom').value !== String(zoom)) $('#cropZoom').value = String(zoom);
+  }
+
+  function applyCrop() {
+    if (!cropState) return;
+    const { img, W, H, Fw, Fh, zoom, ox, oy } = cropState;
+    const base = Math.max(Fw / W, Fh / H);
+    const scale = base * zoom;
+    const iw = W * scale, ih = H * scale;
+    const left = (Fw - iw) / 2 + ox;
+    const top = (Fh - ih) / 2 + oy;
+    const sw = Math.min(W, Fw / scale);
+    const sh = Math.min(H, Fh / scale);
+    const sx = clamp(-left / scale, 0, Math.max(0, W - sw));
+    const sy = clamp(-top / scale, 0, Math.max(0, H - sh));
+    const out = document.createElement('canvas');
+    out.width = Math.max(1, Math.round(sw));
+    out.height = Math.max(1, Math.round(sh));
+    out.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, out.width, out.height);
+    S.sourceOriginal = out;
+    S.whiteBg = detectWhiteBg(out);
+    S.projectId = null;
+    refreshSource();
+    $('#uploadThumb').src = out.toDataURL('image/jpeg', 0.85);
+    closeSheets();
+    updateHomeUI();
+    toast('已应用裁切');
+  }
+
+  function bindCrop() {
+    $('#ipCropBtn').addEventListener('click', openCrop);
+    $('#ipBlank').addEventListener('change', e => {
+      S.opts.blank = e.target.checked;
+      saveSettings();
+      schedulePreview();
+    });
+    $('#cropCancel').addEventListener('click', closeSheets);
+    $('#cropApply').addEventListener('click', applyCrop);
+    $('#cropZoom').addEventListener('input', e => {
+      if (!cropState) return;
+      cropState.zoom = +e.target.value;
+      renderCrop();
+    });
+    $('#cropRatios').addEventListener('click', e => {
+      const b = e.target.closest('[data-ratio]');
+      if (!b || !cropState) return;
+      cropState.ratio = b.dataset.ratio;
+      $$('#cropRatios .g-filter').forEach(x => x.classList.toggle('active', x === b));
+      layoutCrop();
+    });
+    const stage = $('#cropStage');
+    stage.addEventListener('pointerdown', e => {
+      if (!cropState) return;
+      stage.setPointerCapture(e.pointerId);
+      cropDrag = { x: e.clientX, y: e.clientY, ox: cropState.ox, oy: cropState.oy };
+    });
+    stage.addEventListener('pointermove', e => {
+      if (!cropDrag || !cropState) return;
+      cropState.ox = cropDrag.ox + (e.clientX - cropDrag.x);
+      cropState.oy = cropDrag.oy + (e.clientY - cropDrag.y);
+      renderCrop();
+    });
+    const end = () => { cropDrag = null; };
+    stage.addEventListener('pointerup', end);
+    stage.addEventListener('pointercancel', end);
+  }
+
   function renderHomePresets() {
     const host = $('#homePresets');
     host.innerHTML = PRESETS.map(p => `
@@ -474,6 +757,7 @@
 
   function updateHomeUI() {
     const hasImg = !!S.img;
+    const showPreview = S.mode === 'image' && S.sourceMode === 'image' && !!S.sourceOriginal;
     const customActive = !PRESETS.some(p => p.cols === S.cols);
     $$('#homePresets .preset').forEach(btn => {
       const v = btn.dataset.homeCols;
@@ -485,9 +769,24 @@
     $('#homeBrand').value = S.opts.brand;
     $('#homeColors').value = String(S.opts.maxColors);
 
+    const title = $('#calibrateTitle');
+    const note = $('#calibrateNote');
+    const label = $('#generateLabel');
+    const sizeField = $('#sizeField');
+    const previewWrap = $('#imagePreview');
+    if (title) title.textContent = showPreview ? '效果预览' : '选择图纸规格';
+    if (note) note.textContent = showPreview ? '先看效果，再选尺寸' : '默认即可，之后还能改';
+    if (label) label.textContent = showPreview ? `使用 ${S.cols} 格生成` : '生成图纸';
+    if (sizeField) sizeField.classList.toggle('hidden', showPreview);
+    if (previewWrap) previewWrap.classList.toggle('hidden', !showPreview);
+
     if (!hasImg) {
       $('#homeEstimate').textContent = '上传图片后显示用量估算';
       $$('#homePresets em[data-home-est]').forEach(em => { em.textContent = '—'; });
+      return;
+    }
+    if (showPreview) {
+      refreshPreviewUI();
       return;
     }
     const rows = E.estimateRows(S.cols, S.imgW, S.imgH, S.opts.square);
@@ -1987,6 +2286,7 @@
     $('#modeTemplate').classList.toggle('hidden', mode !== 'template');
     if (mode === 'text') setTimeout(() => { $('#textInput').focus(); }, 60);
     updateCalibrateVisibility();
+    updateHomeUI();
     refreshRecent();
   }
 
@@ -2036,6 +2336,7 @@
     if (!raw) {
       S.img = null;
       S.sourceOriginal = null;
+      S.uploadOriginal = null;
       updateCalibrateVisibility();
       return;
     }
@@ -2236,6 +2537,7 @@
     updateCounts();
     S.dirty = false;
     S.sourceOriginal = null;
+    S.uploadOriginal = null;
     S.img = null;
     S.imgFull = null;
     if (p.source) {
@@ -2245,6 +2547,7 @@
         c.width = img.width; c.height = img.height;
         c.getContext('2d').drawImage(img, 0, 0);
         S.sourceOriginal = c;
+        S.uploadOriginal = c;
         S.sourceMode = p.sourceMode || 'image';
         S.whiteBg = p.whiteBg !== undefined ? !!p.whiteBg : detectWhiteBg(c);
         refreshSource();
@@ -2362,6 +2665,7 @@
       S.gridBackup = null;
       S.selected = 0;
       S.sourceOriginal = null;
+      S.uploadOriginal = null;
       S.img = null;
       S.imgFull = null;
       S.sourceMode = 'image';
@@ -2706,6 +3010,7 @@
     bindKeyboard();
     bindNewUI();
     bindGallery();
+    bindCrop();
     ['settingsDesktop', 'settingsMobile'].forEach(id => {
       const host = document.getElementById(id);
       host.addEventListener('click', onSettingsClick);

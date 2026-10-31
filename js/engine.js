@@ -466,6 +466,23 @@
     }
 
     const merged = opts.merge > 0 ? spatialMerge(grid, palette, opts.merge) : grid;
+    // 白底图边缘的浅灰色抗锯齿像素：只留空与背景相邻的浅灰格，避免一圈灰边
+    if (opts.edgeClean) {
+      const emptyAt = (y, x) => y < 0 || x < 0 || y >= rows || x >= cols || merged[y][x] < 0;
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          const v = merged[y][x];
+          if (v < 0) continue;
+          const c = palette[v];
+          const mx = Math.max(c.r, c.g, c.b), mn = Math.min(c.r, c.g, c.b);
+          const lum = (c.r + c.g + c.b) / 3;
+          if (mx - mn <= 22 && lum > 150 &&
+              (emptyAt(y - 1, x) || emptyAt(y + 1, x) || emptyAt(y, x - 1) || emptyAt(y, x + 1))) {
+            merged[y][x] = -1;
+          }
+        }
+      }
+    }
     const counts = new Array(palette.length).fill(0);
     for (const row of merged) for (const v of row) if (v >= 0) counts[v]++;
     return { grid: merged, counts };
