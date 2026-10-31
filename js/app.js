@@ -2599,6 +2599,28 @@
     }
   }
 
+  function shareCaptionText() {
+    const title = S.title || '拼豆图纸';
+    const colors = S.palette.filter(p => p.count > 0).length;
+    const url = shareState ? shareState.url : '';
+    return [
+      `【${title}】${S.cols}×${S.rows} · ${fmtNum(S.total)} 颗 · ${colors} 色`,
+      '一张可以照着拼的拼豆图纸，链接打开就能拼同款：',
+      url,
+      '#拼豆 #拼豆图纸 #手工 #DIY',
+    ].join('\n');
+  }
+
+  async function copyShareCaption() {
+    if (!shareState) return;
+    try {
+      await navigator.clipboard.writeText(shareCaptionText());
+      toast('小红书文案已复制');
+    } catch (e) {
+      toast('复制失败，请重试');
+    }
+  }
+
   async function copyShareLink() {
     if (!shareState || !shareState.url) return;
     const url = shareState.url;
@@ -2981,6 +3003,7 @@
       setTimeout(openShareSheet, 180);
     });
     $('#copyShareLink').addEventListener('click', copyShareLink);
+    $('#copyShareCaption').addEventListener('click', copyShareCaption);
     $('#downloadShareCard').addEventListener('click', downloadShareCard);
     $('#nativeShare').addEventListener('click', nativeShare);
     $('#recentGrid').addEventListener('click', e => {
